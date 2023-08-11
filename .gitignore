@@ -11,3 +11,4 @@ build/
 .cproject
 *.exe
 *.msi
+.vscode/settings.json
