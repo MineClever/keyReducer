@@ -10,9 +10,10 @@ set(EXECUTABLE_OUTPUT_PATH "${PROJECT_SOURCE_DIR}/plug-ins/$ENV{MayaVersion}")
 set(LIBRARY_OUTPUT_PATH "${PROJECT_SOURCE_DIR}/plug-ins/$ENV{MayaVersion}")
 
 # 设置Maya文件目录
-set(MayaPath "$ENV{AutodeskDirPath}/Maya$ENV{MayaVersion}")
-set(Maya_Head "${MayaPath}/include/")
-set(MAYA_LIBRARY_DIR "${MayaPath}/lib")
+set(MAYA_PATH "$ENV{AutodeskDirPath}/Maya$ENV{MayaVersion}")
+set(MAYA_HEAD "${MAYA_PATH}/include/")
+set(MAYA_LIBRARY_DIR "${MAYA_PATH}/lib")
+set(PLUGIN_HEAD "${PROJECT_SOURCE_DIR}/include")
 
 message(WARNING "Start build project" ...)
 
@@ -21,7 +22,8 @@ file(GLOB_RECURSE SRC_DIR_LIST "${PROJECT_SOURCE_DIR}/source/*.cpp" "${PROJECT_S
 
 #添加同文件路径
 include_directories(
-        ${Maya_Head}
+        ${MAYA_HEAD}
+        ${PLUGIN_HEAD}
 )
 
 # 查找Lib文件

@@ -18,6 +18,10 @@
 #include <maya/MAnimCurveChange.h>
 #include <vector>
 
+#ifndef MAYA2018
+#define MAYA2018
+#endif
+
 class Key
 {
 public:

@@ -250,6 +250,7 @@ void copyKey(const int index, const MFnAnimCurve &fnSource, MFnAnimCurve &fnDest
 #else
 	float inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
 #endif
+	
 	fnSource.getTangent(index, inXTangentValue, inYTangentValue, true);
 	fnSource.getTangent(index, outXTangentValue, outYTangentValue, false);
 	
