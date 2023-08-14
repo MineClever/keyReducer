@@ -12,3 +12,4 @@ build/
 *.exe
 *.msi
 .vscode/settings.json
+plug-ins/
