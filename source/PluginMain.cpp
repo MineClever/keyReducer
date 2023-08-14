@@ -33,8 +33,8 @@ MStatus initializePlugin( MObject obj )
 	}
     
 	MString command;
-	command = "print('Load KeyReducer')";
-	MGlobal::executeCommand(command, true, false);
+	command = "print(\"Load tcKeyReducer\")";
+	MGlobal::executeCommand(command, false, false);
 
 	return status;
 }

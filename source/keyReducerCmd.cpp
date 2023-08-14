@@ -284,7 +284,7 @@ void fixCurve(const MFnAnimCurve &fnSource,  MFnAnimCurve &fnDest)
     unsigned int sourceKeyIndex, destKeyIndex;
     double sourceValue, destValue;
     MTime eTime;
-	for (unsigned int i = 0; i < nKeys; ++i)
+	for (int i = 0; i < nKeys; ++i)
 	{
 		MTime time = fnDest.time(i);
 		double fvalue = fnDest.value(i);
