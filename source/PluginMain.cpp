@@ -31,11 +31,8 @@ MStatus initializePlugin( MObject obj )
 		MGlobal::displayError("Error registering tcRestoreKeys");
 		return status;
 	}
-    
-	MString command;
-	command = "print(\"Load tcKeyReducer\")";
-	MGlobal::executeCommand(command, false, false);
 
+	MGlobal::displayInfo("Load tcKeyReducer");
 	return status;
 }
 
