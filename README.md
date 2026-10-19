@@ -43,13 +43,18 @@ no manually defined Maya year macros are needed.
 
 ## Python UI
 
-Add `python` to Maya's Python path and the matching `plug-ins/<year>` directory
-to Maya's plugin path. Load `keyReducer.mll`, then run:
+Add `python` to Maya's Python path, then run:
 
 ```python
 from tcKeyReducer import tcKeyReducer
 tcKeyReducer.run()
 ```
+
+Startup automatically reuses a loaded KeyReducer plugin or loads the MLL for the
+current Maya version from `plug-ins/<year>` in this checkout, or
+`maya_<year>/Plug-ins` when the package is deployed under `pluginLoader/scripts`.
+It also tries `keyReducer` and `tcKeyReducer` through Maya's plugin search path.
+Loading failures report the attempts and reasons before opening the UI.
 
 - **Auto Execute** is off by default. Slider changes and entering a value only
   update the reduction parameter.
@@ -61,7 +66,13 @@ tcKeyReducer.run()
 - With **Auto Execute** enabled, dragging previews from the cached original
   curves; entering a value and pressing Return also executes.
 
-The UI supports PySide6, PySide2, and legacy PySide.
+Every option has a Chinese/English tooltip. The main window's **Help / 帮助**
+action opens a scrollable bilingual guide covering the algorithm, settings,
+workflow, previews, undo and automatic plugin loading. Help remains available
+when no objects are selected.
+
+The UI uses Python 2/3 compatible syntax and Unicode text, with imports for
+PySide6, PySide2, and legacy PySide.
 
 ## Validation
 
@@ -77,7 +88,11 @@ set "QT_QPA_PLATFORM=offscreen"
 
 The checks load the exact supplied plugin and cover manual parameter changes,
 Execute/Undo/Redo, automatic preview undo grouping, text entry, empty selection,
-and tangent preservation.
+and tangent preservation. They also check bilingual tooltips, help scrolling,
+automatic loading after unloading the plugin, the deployed version-directory
+layout, plugin-path fallback, failure reporting and repeated UI opening.
+For Python 2 on Maya 2022, run the same command using `mayapy2.exe` with
+`MAYA_PYTHON_VERSION=2` and a separate `MAYA_APP_DIR`.
 
 ## License
 

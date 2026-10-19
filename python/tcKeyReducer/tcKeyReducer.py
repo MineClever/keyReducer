@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import re
 import sys
@@ -13,9 +14,66 @@ except ImportError:
         import PySide.QtGui as QtWidgets
 
 from maya import cmds
+from .help_text import HELP_HTML, TOOLTIPS
 
 GRAPH_EDITOR_NAME = 'graphEditor1GraphEd'
 CHANNEL_BOX_NAME = 'mainChannelBox'
+PLUGIN_COMMANDS = set(('tcKeyReducer', 'tcStoreKeys', 'tcRestoreKeys'))
+
+
+def _plugin_candidates():
+    """Find this Maya's binaries in both development and deployed layouts."""
+    match = re.search(r'\d{4}', str(cmds.about(version=True)))
+    if not match:
+        raise RuntimeError(u'无法识别 Maya 版本 / Cannot determine the Maya version.')
+    version = match.group(0)
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    directories = (
+        os.path.join(root, 'plug-ins', version),
+        os.path.join(root, 'maya_' + version, 'Plug-ins'),
+    )
+    candidates = []
+    for directory in directories:
+        for name in ('keyReducer.mll', 'tcKeyReducer.mll'):
+            path = os.path.join(directory, name)
+            if os.path.isfile(path):
+                candidates.append(path)
+    # Maya resolves these using MAYA_PLUG_IN_PATH, including user installations.
+    candidates.extend(('keyReducer', 'tcKeyReducer'))
+    return candidates
+
+
+def _provides_commands(plugin):
+    try:
+        if not cmds.pluginInfo(plugin, query=True, loaded=True):
+            return False
+        commands = cmds.pluginInfo(plugin, query=True, command=True) or []
+        return PLUGIN_COMMANDS.issubset(set(commands))
+    except RuntimeError:
+        return False
+
+
+def _ensure_plugin_loaded():
+    for plugin in cmds.pluginInfo(query=True, listPlugins=True) or []:
+        if _provides_commands(plugin):
+            return plugin
+
+    failures = []
+    for candidate in _plugin_candidates():
+        try:
+            loaded = cmds.loadPlugin(candidate, quiet=True) or []
+            if isinstance(loaded, (str, type(u''))):
+                loaded = [loaded]
+            for plugin in loaded:
+                if _provides_commands(plugin):
+                    return plugin
+            failures.append(u'{0}: 未提供所需命令 / Required commands are unavailable.'.format(candidate))
+        except RuntimeError as error:
+            failures.append(u'{0}: {1}'.format(candidate, error))
+    raise RuntimeError(
+        u'无法加载 KeyReducer 插件。请检查当前 Maya 版本的 MLL 或 MAYA_PLUG_IN_PATH。\n'
+        u'Could not load KeyReducer. Check the MLL for this Maya version or MAYA_PLUG_IN_PATH.\n'
+        + u'\n'.join(failures))
 
 def _build_layout(horizontal):
     # type: (bool)-> QtWidgets.QHBoxLayout|QtWidgets.QVBoxLayout
@@ -129,6 +187,7 @@ class KeyReducerControls(QtWidgets.QWidget):
 
     def _create_time_layout(self):
         group = QtWidgets.QGroupBox("Range: ")
+        group.setToolTip(TOOLTIPS['range'])
         layout = _build_layout(False)
         group.setLayout(layout)
         self._main_layout.addWidget(group)
@@ -178,6 +237,7 @@ class KeyReducerControls(QtWidgets.QWidget):
 
     def _create_attrs_layout(self):
         group = QtWidgets.QGroupBox("Attributes: ")
+        group.setToolTip(TOOLTIPS['attributes'])
         layout = _build_layout(True)
         group.setLayout(layout)
         self._main_layout.addWidget(group)
@@ -224,6 +284,13 @@ class KeyReducerControls(QtWidgets.QWidget):
         actions.addWidget(self._undo_button)
         self._main_layout.addLayout(actions)
         self._main_layout.addWidget(QtWidgets.QWidget(), 1)
+        for name, tip in TOOLTIPS.items():
+            if not name.startswith('_'):
+                continue
+            widget = getattr(self, name)
+            widget.setToolTip(tip)
+            if isinstance(widget.parentWidget(), LineWidget):
+                widget.parentWidget().setToolTip(tip)
 
     def _connect_signals(self):
         self._min_value.valueChanged.connect(self._min_value_changed)
@@ -385,6 +452,22 @@ class KeyReducerControls(QtWidgets.QWidget):
         self._value_slider.setTickInterval(max(1, int(round((self._max_value.value() - self._min_value.value()) * 1000))))
 
 
+class KeyReducerHelpDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super(KeyReducerHelpDialog, self).__init__(parent)
+        self.setWindowTitle(u'KeyReducer Help / 使用说明')
+        self.resize(740, 640)
+        layout = QtWidgets.QVBoxLayout(self)
+        self._browser = QtWidgets.QTextBrowser()
+        self._browser.setReadOnly(True)
+        self._browser.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        self._browser.setHtml(HELP_HTML)
+        layout.addWidget(self._browser)
+        close_button = QtWidgets.QPushButton(u'Close / 关闭')
+        close_button.clicked.connect(self.close)
+        layout.addWidget(close_button, 0, QtCore.Qt.AlignRight)
+
+
 class KeyReducerWidget(QtWidgets.QDialog):
     def __init__(self,parent=None):
         super(KeyReducerWidget, self).__init__(parent)
@@ -396,6 +479,14 @@ class KeyReducerWidget(QtWidgets.QDialog):
         self._main_layout = _build_layout(False)
         self.setLayout(self._main_layout)
 
+        self._help_dialog = None
+        self._menu_bar = QtWidgets.QMenuBar(self)
+        self._menu_bar.setNativeMenuBar(False)
+        self._help_action = self._menu_bar.addAction(u'Help / 帮助')
+        self._help_action.setToolTip(TOOLTIPS['help'])
+        self._help_action.triggered.connect(self._show_help)
+        self._main_layout.setMenuBar(self._menu_bar)
+
         about = QtWidgets.QLabel()
         about.setPixmap(QtGui.QPixmap(_get_icons_path()+'abouts.png'))
         self._main_layout.addWidget(about)
@@ -405,21 +496,35 @@ class KeyReducerWidget(QtWidgets.QDialog):
 
         self._script_jobs = []
 
+    def _show_help(self):
+        if self._help_dialog is None:
+            self._help_dialog = KeyReducerHelpDialog(self)
+        self._help_dialog.show()
+        self._help_dialog.raise_()
+        self._help_dialog.activateWindow()
+
     def _selection_changed(self):
         selection = cmds.ls(sl=True, l=True)
         self._controls.setEnabled(bool(selection))
 
     def _start_script_jobs(self):
-        self._script_jobs = []
+        self._stop_script_jobs()
         id = cmds.scriptJob(event=["SelectionChanged", self._selection_changed])
-        self._script_jobs.append(id)
+        # Batch/standalone Maya may return None instead of creating a UI job.
+        if id is not None:
+            self._script_jobs.append(id)
 
-    def closeEvent(self, event):
+    def _stop_script_jobs(self):
         for id in self._script_jobs:
             if cmds.scriptJob(exists=id):
                 cmds.scriptJob(kill=id)
 
         self._script_jobs = []
+
+    def closeEvent(self, event):
+        self._stop_script_jobs()
+        if self._help_dialog is not None:
+            self._help_dialog.close()
         super(KeyReducerWidget, self).closeEvent(event)
 
 key_reducer_widget = None
@@ -431,12 +536,7 @@ def get_key_reducer_widget():
 
 
 def run():
-    plugin_names = ('tcKeyReducer', 'keyReducer')
-    for plugin_name in plugin_names:
-        if cmds.pluginInfo(plugin_name, q=True, registered=True):
-            if not cmds.pluginInfo(plugin_name, q=True, l=True):
-                cmds.loadPlugin(plugin_name, quiet=True)
-                break
+    _ensure_plugin_loaded()
 
     w = get_key_reducer_widget()
     w._start_script_jobs()
@@ -444,3 +544,4 @@ def run():
     w.resize(500, 200)
     w.show()
     w.raise_()
+    return w

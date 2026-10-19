@@ -14,3 +14,5 @@ build/
 .vscode/settings.json
 plug-ins/
 local_build_win.bat
+/local_sync_pluginloader.ps1
+/local_sync_pluginloader.bat
