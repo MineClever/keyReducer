@@ -13,3 +13,4 @@ build/
 *.msi
 .vscode/settings.json
 plug-ins/
+local_build_win.bat
