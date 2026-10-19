@@ -43,18 +43,18 @@ no manually defined Maya year macros are needed.
 
 ## Python UI
 
-Add `python` to Maya's Python path, then run:
+Add `python` to Maya's Python path and the matching `plug-ins/<year>` directory
+to `MAYA_PLUG_IN_PATH`, then run:
 
 ```python
 from tcKeyReducer import tcKeyReducer
 tcKeyReducer.run()
 ```
 
-Startup automatically reuses a loaded KeyReducer plugin or loads the MLL for the
-current Maya version from `plug-ins/<year>` in this checkout, or
-`maya_<year>/Plug-ins` when the package is deployed under `pluginLoader/scripts`.
-It also tries `keyReducer` and `tcKeyReducer` through Maya's plugin search path.
-Loading failures report the attempts and reasons before opening the UI.
+Startup checks `cmds.pluginInfo('keyReducer', q=True, loaded=True)` and calls
+`cmds.loadPlugin('keyReducer.mll', quiet=True)` when needed, matching the
+MagicBoneDynamic backend's loading pattern. Maya resolves the MLL through its
+plugin search path. Loading errors propagate before the UI opens.
 
 - **Auto Execute** is off by default. Slider changes and entering a value only
   update the reduction parameter.
@@ -89,8 +89,8 @@ set "QT_QPA_PLATFORM=offscreen"
 The checks load the exact supplied plugin and cover manual parameter changes,
 Execute/Undo/Redo, automatic preview undo grouping, text entry, empty selection,
 and tangent preservation. They also check bilingual tooltips, help scrolling,
-automatic loading after unloading the plugin, the deployed version-directory
-layout, plugin-path fallback, failure reporting and repeated UI opening.
+automatic loading by filename after unloading the plugin, failure propagation
+and repeated UI opening.
 For Python 2 on Maya 2022, run the same command using `mayapy2.exe` with
 `MAYA_PYTHON_VERSION=2` and a separate `MAYA_APP_DIR`.
 

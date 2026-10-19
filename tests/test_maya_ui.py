@@ -3,7 +3,6 @@
 from __future__ import print_function
 import os
 import sys
-import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,6 +15,8 @@ import maya.standalone
 maya.standalone.initialize(name='python')
 from maya import cmds
 PLUGIN_PATH = os.path.abspath(sys.argv.pop(1))
+os.environ['MAYA_PLUG_IN_PATH'] = os.pathsep.join(
+    [os.path.dirname(PLUGIN_PATH), os.environ.get('MAYA_PLUG_IN_PATH', '')])
 PLUGIN_NAME = cmds.loadPlugin(PLUGIN_PATH, quiet=True)[0]
 
 
@@ -138,10 +139,10 @@ class KeyReducerUiTests(unittest.TestCase):
     def test_startup_auto_loads_unloaded_plugin_and_reuses_jobs(self):
         cmds.flushUndo()
         cmds.unloadPlugin(PLUGIN_NAME)
-        self.assertFalse(ui._provides_commands(PLUGIN_NAME))
+        self.assertFalse(cmds.pluginInfo(PLUGIN_NAME, q=True, loaded=True))
         window = ui.run()
         try:
-            self.assertTrue(ui._provides_commands(PLUGIN_NAME))
+            self.assertTrue(cmds.pluginInfo(PLUGIN_NAME, q=True, loaded=True))
             self.assertTrue(window.isVisible())
             self.assertEqual(os.path.normcase(os.path.normpath(
                 cmds.pluginInfo(PLUGIN_NAME, query=True, path=True))),
@@ -158,63 +159,38 @@ class KeyReducerUiTests(unittest.TestCase):
         for job in final_jobs:
             self.assertFalse(cmds.scriptJob(exists=job))
 
-    def test_deployed_layout_uses_only_current_maya_version(self):
-        root = tempfile.mkdtemp(prefix='loader-layout-', dir=os.path.join(ROOT, 'build'))
-        version = ui.re.search(r'\d{4}', cmds.about(version=True)).group(0)
-        expected = os.path.join(root, 'maya_' + version, 'Plug-ins', 'keyReducer.mll')
-        wrong = os.path.join(root, 'maya_2099', 'Plug-ins', 'keyReducer.mll')
-        for path in (expected, wrong):
-            os.makedirs(os.path.dirname(path))
-            with open(path, 'wb'):
-                pass
-        original = ui.__file__
-        ui.__file__ = os.path.join(root, 'scripts', 'tcKeyReducer', 'tcKeyReducer.py')
-        try:
-            candidates = ui._plugin_candidates()
-            self.assertIn(expected, candidates)
-            self.assertNotIn(wrong, candidates)
-        finally:
-            ui.__file__ = original
-
-    def test_plugin_path_fallback_and_load_failure(self):
+    def test_plugin_name_loading_and_failure(self):
         class FakeCommands(object):
             def __init__(self):
                 self.loaded = False
                 self.attempts = []
-                self.fail_all = False
+                self.fail_load = False
 
-            def about(self, **kwargs):
-                return '2099'
-
-            def pluginInfo(self, plugin=None, **kwargs):
-                if kwargs.get('listPlugins'):
-                    return ['tcKeyReducer'] if self.loaded else []
-                if kwargs.get('loaded'):
-                    return self.loaded
-                return list(ui.PLUGIN_COMMANDS)
+            def pluginInfo(self, plugin, **kwargs):
+                if not self.loaded:
+                    raise RuntimeError('Plugin is not registered')
+                return True
 
             def loadPlugin(self, candidate, **kwargs):
                 self.attempts.append(candidate)
-                if self.fail_all or candidate != 'tcKeyReducer':
+                if self.fail_load:
                     raise RuntimeError('test load failure')
                 self.loaded = True
-                return ['tcKeyReducer']
 
         original = ui.cmds
         fake = FakeCommands()
         ui.cmds = fake
         try:
-            self.assertEqual(ui._ensure_plugin_loaded(), 'tcKeyReducer')
-            self.assertEqual(fake.attempts, ['keyReducer', 'tcKeyReducer'])
+            ui._ensure_plugin_loaded()
+            self.assertEqual(fake.attempts, ['keyReducer.mll'])
             fake.attempts = []
             ui._ensure_plugin_loaded()
             self.assertEqual(fake.attempts, [])
             fake.loaded = False
-            fake.fail_all = True
+            fake.fail_load = True
             with self.assertRaises(RuntimeError) as raised:
                 ui._ensure_plugin_loaded()
-            self.assertIn('test load failure', raised.exception.args[0])
-            self.assertIn('MAYA_PLUG_IN_PATH', raised.exception.args[0])
+            self.assertEqual(raised.exception.args[0], 'test load failure')
         finally:
             ui.cmds = original
 

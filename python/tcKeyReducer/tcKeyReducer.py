@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import os
-import re
 import sys
 import traceback
 
@@ -18,62 +17,16 @@ from .help_text import HELP_HTML, TOOLTIPS
 
 GRAPH_EDITOR_NAME = 'graphEditor1GraphEd'
 CHANNEL_BOX_NAME = 'mainChannelBox'
-PLUGIN_COMMANDS = set(('tcKeyReducer', 'tcStoreKeys', 'tcRestoreKeys'))
-
-
-def _plugin_candidates():
-    """Find this Maya's binaries in both development and deployed layouts."""
-    match = re.search(r'\d{4}', str(cmds.about(version=True)))
-    if not match:
-        raise RuntimeError(u'无法识别 Maya 版本 / Cannot determine the Maya version.')
-    version = match.group(0)
-    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    directories = (
-        os.path.join(root, 'plug-ins', version),
-        os.path.join(root, 'maya_' + version, 'Plug-ins'),
-    )
-    candidates = []
-    for directory in directories:
-        for name in ('keyReducer.mll', 'tcKeyReducer.mll'):
-            path = os.path.join(directory, name)
-            if os.path.isfile(path):
-                candidates.append(path)
-    # Maya resolves these using MAYA_PLUG_IN_PATH, including user installations.
-    candidates.extend(('keyReducer', 'tcKeyReducer'))
-    return candidates
-
-
-def _provides_commands(plugin):
-    try:
-        if not cmds.pluginInfo(plugin, query=True, loaded=True):
-            return False
-        commands = cmds.pluginInfo(plugin, query=True, command=True) or []
-        return PLUGIN_COMMANDS.issubset(set(commands))
-    except RuntimeError:
-        return False
 
 
 def _ensure_plugin_loaded():
-    for plugin in cmds.pluginInfo(query=True, listPlugins=True) or []:
-        if _provides_commands(plugin):
-            return plugin
+    try:
+        loaded = cmds.pluginInfo('keyReducer', q=True, loaded=True)
+    except RuntimeError:
+        loaded = False
+    if not loaded:
+        cmds.loadPlugin('keyReducer.mll', quiet=True)
 
-    failures = []
-    for candidate in _plugin_candidates():
-        try:
-            loaded = cmds.loadPlugin(candidate, quiet=True) or []
-            if isinstance(loaded, (str, type(u''))):
-                loaded = [loaded]
-            for plugin in loaded:
-                if _provides_commands(plugin):
-                    return plugin
-            failures.append(u'{0}: 未提供所需命令 / Required commands are unavailable.'.format(candidate))
-        except RuntimeError as error:
-            failures.append(u'{0}: {1}'.format(candidate, error))
-    raise RuntimeError(
-        u'无法加载 KeyReducer 插件。请检查当前 Maya 版本的 MLL 或 MAYA_PLUG_IN_PATH。\n'
-        u'Could not load KeyReducer. Check the MLL for this Maya version or MAYA_PLUG_IN_PATH.\n'
-        + u'\n'.join(failures))
 
 def _build_layout(horizontal):
     # type: (bool)-> QtWidgets.QHBoxLayout|QtWidgets.QVBoxLayout

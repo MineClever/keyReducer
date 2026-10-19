@@ -113,12 +113,12 @@ the current result. Undo first when comparing settings against the same original
 first. Maya's Redo is also available.</p>
 
 <h2>6. 启动与插件 / Startup and plugin loading</h2>
-<p>打开 UI 时会先检查是否已有提供减键命令的插件加载；否则查找当前 Maya 版本的
-项目 plug-ins 目录或 pluginLoader 的 maya_版本/Plug-ins 目录，最后尝试 Maya 插件搜索路径。
-请使用与 Maya 版本匹配的 MLL；如果加载失败，错误信息会给出尝试路径与原因。</p>
-<p>Opening the UI first checks for an already loaded plugin providing the reduction commands.
-Otherwise, it searches the project's versioned plug-ins folder or pluginLoader's
-maya_version/Plug-ins folder, then tries Maya's plugin search path. Use an MLL built for your
-Maya version. Loading failures report the attempted paths and reasons.</p>
+<p>打开 UI 时先检查 keyReducer 是否已经加载；未加载时直接调用
+cmds.loadPlugin('keyReducer.mll', quiet=True)。请将当前 Maya 版本的 MLL 所在目录加入
+MAYA_PLUG_IN_PATH，由 Maya 解析插件位置。加载失败时会直接报告 Maya 的错误，暂不打开 UI。</p>
+<p>Opening the UI checks whether keyReducer is loaded. If needed, it directly calls
+cmds.loadPlugin('keyReducer.mll', quiet=True). Add the directory containing the MLL for your
+Maya version to MAYA_PLUG_IN_PATH so Maya can resolve it. Loading failures report Maya's
+error before opening the UI.</p>
 </body></html>
 """
