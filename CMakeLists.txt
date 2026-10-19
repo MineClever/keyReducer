@@ -1,48 +1,36 @@
-# CMake 最低版本号要求
-cmake_minimum_required (VERSION 3.5)
-
-# 项目信息
-set(PluginFileName "keyReducer")
+cmake_minimum_required(VERSION 3.12)
 project(keyReducer LANGUAGES CXX VERSION 1.0 DESCRIPTION "Maya Key reducer")
 
-# 设置输出路径
-set(EXECUTABLE_OUTPUT_PATH "${PROJECT_SOURCE_DIR}/plug-ins/$ENV{MayaVersion}")
-set(LIBRARY_OUTPUT_PATH "${PROJECT_SOURCE_DIR}/plug-ins/$ENV{MayaVersion}")
+# Match boneDynamicsNode: use the selected SDK's official plugin build helpers.
+if(NOT EXISTS "$ENV{DEVKIT_LOCATION}/cmake/pluginEntry.cmake")
+    message(FATAL_ERROR "Set DEVKIT_LOCATION to a Maya devkitBase directory containing cmake/pluginEntry.cmake")
+endif()
+include("$ENV{DEVKIT_LOCATION}/cmake/pluginEntry.cmake")
 
-# 设置Maya文件目录
-set(MAYA_PATH "$ENV{AutodeskDirPath}/Maya$ENV{MayaVersion}")
-set(MAYA_HEAD "${MAYA_PATH}/include/")
-set(MAYA_LIBRARY_DIR "${MAYA_PATH}/lib")
-set(PLUGIN_HEAD "${PROJECT_SOURCE_DIR}/include")
-
-message(WARNING "Start build project" ...)
-
-# 查找source目录下的所有*.cpp,*.c源文件,并将文件列表保存到 SRC_DIR_LIST 变量
-file(GLOB_RECURSE SRC_DIR_LIST "${PROJECT_SOURCE_DIR}/source/*.cpp" "${PROJECT_SOURCE_DIR}/source/*.c" "${PROJECT_SOURCE_DIR}/include/*.h" "${PROJECT_SOURCE_DIR}/include/*.hpp")
-
-#添加同文件路径
-include_directories(
-        ${MAYA_HEAD}
-        ${PLUGIN_HEAD}
+set(SOURCE_FILES
+    source/PluginMain.cpp
+    source/keyReducerCmd.cpp
+    source/restoreKeys.cpp
+    include/keyReducerCmd.h
+    include/restoreKeys.h
 )
-
-# 查找Lib文件
-foreach(MAYA_LIB_NAME OpenMaya OpenMayaAnim OpenMayaFX OpenMayaRender OpenMayaUI Foundation tbb)
-	find_library(MAYA_${MAYA_LIB_NAME}_LIBRARY NAMES ${MAYA_LIB_NAME} PATHS ${MAYA_LIBRARY_DIR} NO_DEFAULT_PATH)
-	set(MAYA_LIBRARIES ${MAYA_LIBRARIES} ${MAYA_${MAYA_LIB_NAME}_LIBRARY}) #append a lib to MAYA_LIBRARIES list
+set(INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include")
+set(LIBRARIES OpenMaya OpenMayaAnim Foundation)
+# The same build folder can switch between Devkit and installed Maya libraries.
+# SDK helpers cache find_library results, so resolve them again on configure.
+foreach(MAYA_LIBRARY IN LISTS LIBRARIES)
+    unset(${MAYA_LIBRARY}_PATH CACHE)
 endforeach()
+build_plugin()
 
-#将SRC_DIR_LIST中文件列表以静态库的方式加入工程
-add_library(${PROJECT_NAME} SHARED ${SRC_DIR_LIST})
-
-
-#添加链接目录
-target_link_directories(${PROJECT_NAME} PUBLIC ${MAYA_LIBRARY_DIR})
-target_link_libraries(${PROJECT_NAME} ${MAYA_LIBRARIES})
-
-set_target_properties(
-    ${PROJECT_NAME}
-    PROPERTIES
-        OUTPUT_NAME ${PluginFileName}
-        SUFFIX ".mll"
+if(NOT DEFINED CXX_STANDARD_VER OR CXX_STANDARD_VER STREQUAL "")
+    set(CXX_STANDARD_VER 17)
+endif()
+set_target_properties(${PROJECT_NAME} PROPERTIES
+    CXX_STANDARD ${CXX_STANDARD_VER}
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
 )
+if(MSVC)
+    target_compile_options(${PROJECT_NAME} PRIVATE /permissive- /Zc:__cplusplus /utf-8)
+endif()

@@ -19,9 +19,7 @@
 
 #include <vector>
 
-#ifndef MAYA2018
-#define MAYA2018
-#endif
+#include <maya/MTypes.h>
 
 
 class KeyReducerCmd: public MPxCommand

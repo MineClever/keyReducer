@@ -4,13 +4,13 @@ import sys
 import traceback
 
 try:
-    from PySide2 import QtGui, QtCore, QtWidgets
-    import shiboken2 as shiboken
-
+    from PySide6 import QtGui, QtCore, QtWidgets
 except ImportError:
-    from PySide import QtGui, QtCore
-    import PySide.QtGui as QtWidgets
-    import shiboken
+    try:
+        from PySide2 import QtGui, QtCore, QtWidgets
+    except ImportError:
+        from PySide import QtGui, QtCore
+        import PySide.QtGui as QtWidgets
 
 from maya import cmds
 
@@ -66,6 +66,8 @@ class KeyReducerControls(QtWidgets.QWidget):
 
         self._script_jobs = []
 
+        self._slider_drag_active = False
+
         self._create_widgets()
         self._connect_signals()
 
@@ -93,9 +95,9 @@ class KeyReducerControls(QtWidgets.QWidget):
         v_layout = _build_layout(False)
         layout.addLayout(v_layout)
         self._value_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self._value_slider.setMinimum(0.0 * 10000)
-        self._value_slider.setMaximum(1.0 * 10000)
-        self._value_slider.setValue(0.5 * 10000)
+        self._value_slider.setMinimum(0)
+        self._value_slider.setMaximum(10000)
+        self._value_slider.setValue(5000)
         self._value_slider.setTickPosition(QtWidgets.QSlider.TicksAbove)
         self._value_slider.setTickInterval(1000)
         v_layout.addWidget(self._value_slider)
@@ -159,7 +161,7 @@ class KeyReducerControls(QtWidgets.QWidget):
         self._custom_range_begin = QtWidgets.QSpinBox()
         self._custom_range_begin.setFixedWidth(100)
         min = cmds.playbackOptions(q=True, minTime=True)
-        self._custom_range_begin.setValue(min)
+        self._custom_range_begin.setValue(int(min))
         h_layout.addWidget(self._custom_range_begin)
         l = QtWidgets.QLabel("-")
         l.setFixedWidth(10)
@@ -167,7 +169,7 @@ class KeyReducerControls(QtWidgets.QWidget):
         self._custom_range_end = QtWidgets.QSpinBox()
         self._custom_range_end.setFixedWidth(100)
         max = cmds.playbackOptions(q=True, maxTime=True)
-        self._custom_range_end.setValue(max)
+        self._custom_range_end.setValue(int(max))
         h_layout.addWidget(self._custom_range_end)
 
         self._parent_custom_range.setEnabled(False)
@@ -208,6 +210,19 @@ class KeyReducerControls(QtWidgets.QWidget):
         self._main_layout.addWidget(_create_separator())
         self._create_time_layout()
 
+        self._main_layout.addWidget(_create_separator())
+        actions = _build_layout(True)
+        self._auto_execute = QtWidgets.QCheckBox("Auto Execute")
+        self._auto_execute.setChecked(False)
+        self._auto_execute.setToolTip("Preview reduction while dragging or after entering a value.")
+        self._execute_button = QtWidgets.QPushButton("Execute")
+        self._undo_button = QtWidgets.QPushButton("Undo")
+        self._undo_button.setToolTip("Undo the latest Maya operation, including a reduction or preview drag.")
+        actions.addWidget(self._auto_execute)
+        actions.addStretch(1)
+        actions.addWidget(self._execute_button)
+        actions.addWidget(self._undo_button)
+        self._main_layout.addLayout(actions)
         self._main_layout.addWidget(QtWidgets.QWidget(), 1)
 
     def _connect_signals(self):
@@ -215,10 +230,13 @@ class KeyReducerControls(QtWidgets.QWidget):
         self._max_value.valueChanged.connect(self._max_value_changed)
 
         self._value_slider.sliderPressed.connect(self._value_slider_pressed)
-        self._value_slider.sliderMoved.connect(self._value_slider_moved)
+        self._value_slider.valueChanged.connect(self._value_slider_moved)
         self._value_slider.sliderReleased.connect(self._value_slider_released)
 
         self._value_line_edit.returnPressed.connect(self._value_line_edit_finished)
+
+        self._execute_button.clicked.connect(self._execute)
+        self._undo_button.clicked.connect(self._undo)
 
         self._custom_range_button.toggled.connect(self._custom_range_button_toggled)
 
@@ -226,57 +244,81 @@ class KeyReducerControls(QtWidgets.QWidget):
         self._parent_custom_range.setEnabled(self._custom_range_button.isChecked())
 
     def _value_line_edit_finished(self):
-        value = float(self._value_line_edit.text())
-        if float(value) > self._max_value.value():
-            self._value_line_edit.setText(str(self._max_value.value()))
-        elif float(value) < self._min_value.value():
-            self._value_line_edit.setText(str(self._min_value.value()))
-
-        self._value_slider.setValue(float(self._value_line_edit.text()) * 10000)
-
-        self._run_command()
-
-    def _value_slider_pressed(self):
-        cmds.undoInfo(openChunk=True, chunkName='tcKeyReducerDragging')
         try:
-            value = float(self._value_slider.value())  / 10000
-            self._value_line_edit.setText(str(value))
+            value = float(self._value_line_edit.text())
+        except ValueError:
+            self._sync_slider_value()
+            return
+        value = max(self._min_value.value(), min(value, self._max_value.value()))
+        self._value_slider.setValue(int(round(value * 10000)))
+        self._sync_slider_value()
+        if self._auto_execute.isChecked():
+            self._execute()
 
-            attrs = self._get_attributes()
-            cmds.tcStoreKeys(*attrs)
+    def _sync_slider_value(self):
+        self._value_line_edit.setText(str(self._value_slider.value() / 10000.0))
+
+    def _execute(self):
+        try:
             self._run_command()
-        except:
+        except Exception:
             traceback.print_exc(file=sys.stdout)
 
-    def _value_slider_moved(self):
+    def _undo(self):
         try:
-            value = float(self._value_slider.value())  / 10000
-            self._value_line_edit.setText(str(value))
+            if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+                cmds.undo()
+        except Exception:
+            traceback.print_exc(file=sys.stdout)
 
+    def _value_slider_pressed(self):
+        self._sync_slider_value()
+        if not self._auto_execute.isChecked():
+            return
+        attrs = self._get_attributes()
+        if not attrs:
+            return
+        cmds.undoInfo(openChunk=True, chunkName='tcKeyReducerDragging')
+        try:
+            cmds.tcStoreKeys(*attrs)
+            self._slider_drag_active = True
+            self._run_command()
+        except Exception:
+            self._slider_drag_active = False
+            cmds.undoInfo(closeChunk=True)
+            traceback.print_exc(file=sys.stdout)
+
+    def _value_slider_moved(self, value=None):
+        self._sync_slider_value()
+        if not self._slider_drag_active:
+            return
+        try:
             cmds.tcRestoreKeys()
             self._run_command()
-        except:
+        except Exception:
             traceback.print_exc(file=sys.stdout)
 
     def _value_slider_released(self):
+        self._sync_slider_value()
+        if not self._slider_drag_active:
+            return
         try:
-            value = float(self._value_slider.value())  / 10000
-            self._value_line_edit.setText(str(value))
-
             cmds.tcRestoreKeys()
             self._run_command()
-        except:
+        except Exception:
             traceback.print_exc(file=sys.stdout)
-        cmds.undoInfo(closeChunk=True)
+        finally:
+            self._slider_drag_active = False
+            cmds.undoInfo(closeChunk=True)
 
     def _min_value_changed(self, value):
-        self._value_slider.setMinimum(float(value) * 10000)
-        self._value_slider.setTickInterval((self._max_value.value() - self._min_value.value()) * 1000)
+        self._value_slider.setMinimum(int(round(value * 10000)))
+        self._value_slider.setTickInterval(max(1, int(round((self._max_value.value() - self._min_value.value()) * 1000))))
 
     def _get_attribute_names_from_graph_editor(self):
         animCurves = cmds.animCurveEditor(GRAPH_EDITOR_NAME, q=True, cs=True)
         channels = set()
-        for a in animCurves:
+        for a in animCurves or []:
             connections = cmds.listConnections("%s.output" % a, s=False, d=True, plugs=True)
             tokens = connections[0].split(".")
             channels.add(str(tokens[len(tokens) - 1]))
@@ -296,7 +338,9 @@ class KeyReducerControls(QtWidgets.QWidget):
 
     def _get_all_attributes(self):
         selection = cmds.ls(sl=True, l=True)
-        return [str(c) for c in cmds.listAttr(selection, keyable=True)]
+        if not selection:
+            return []
+        return [str(c) for c in (cmds.listAttr(selection, keyable=True) or [])]
 
     def _get_attributes(self):
 
@@ -319,6 +363,10 @@ class KeyReducerControls(QtWidgets.QWidget):
     def _run_command(self):
         attrs = self._get_attributes()
 
+        if not attrs:
+            cmds.warning('Select objects with keyable attributes to reduce.')
+            return
+
         kwargs = {'value': float(self._value_line_edit.text())}
         if (self._pre_bake.isChecked()):
             kwargs['preBake'] = True
@@ -333,8 +381,8 @@ class KeyReducerControls(QtWidgets.QWidget):
         cmds.tcKeyReducer(*attrs, **kwargs)
 
     def _max_value_changed(self, value):
-        self._value_slider.setMaximum(float(value) * 10000)
-        self._value_slider.setTickInterval((self._max_value.value() - self._min_value.value()) * 1000)
+        self._value_slider.setMaximum(int(round(value * 10000)))
+        self._value_slider.setTickInterval(max(1, int(round((self._max_value.value() - self._min_value.value()) * 1000))))
 
 
 class KeyReducerWidget(QtWidgets.QDialog):

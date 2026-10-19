@@ -219,7 +219,7 @@ void restoreTangents(const MFnAnimCurve &fnSource, MFnAnimCurve &fnDest)
         unsigned int keyID;
         if (fnDest.find(time, keyID))
         {
-#if defined(MAYA2018)
+#if MAYA_API_VERSION >= 20180000
 			MFnAnimCurve::TangentValue inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
 #else
 			float inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
@@ -245,7 +245,7 @@ void copyKey(const int index, const MFnAnimCurve &fnSource, MFnAnimCurve &fnDest
 	MFnAnimCurve::TangentType inTType = fnSource.inTangentType(index);
 	MFnAnimCurve::TangentType outTType = fnSource.outTangentType(index);
     
-#if defined(MAYA2018)
+#if MAYA_API_VERSION >= 20180000
 	MFnAnimCurve::TangentValue inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
 #else
 	float inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;

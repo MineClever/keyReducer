@@ -18,9 +18,7 @@
 #include <maya/MAnimCurveChange.h>
 #include <vector>
 
-#ifndef MAYA2018
-#define MAYA2018
-#endif
+#include <maya/MTypes.h>
 
 class Key
 {
@@ -33,7 +31,7 @@ public:
     
 	MFnAnimCurve::TangentType inTType;
 	MFnAnimCurve::TangentType outTType;
-#if defined(MAYA2018)
+#if MAYA_API_VERSION >= 20180000
 	MFnAnimCurve::TangentValue inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
 #else
 	float inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
