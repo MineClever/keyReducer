@@ -20,6 +20,7 @@
 #include <vector>
 
 #include <maya/MTypes.h>
+#include "curveFitting.h"
 
 
 class KeyReducerCmd: public MPxCommand
@@ -44,6 +45,13 @@ private:
     bool isBeforeEndTime(const MTime &time);
     void sampleCurve(MFnAnimCurve &curve);
     MStatus alignKeyTimes(const std::vector<MObject> &curves);
+    struct CurveLockSnapshot
+    {
+        MObject curve;
+        KeyReducerDetail::CurveLocks locks;
+    };
+    MStatus restoreCurveLocks(const std::vector<CurveLockSnapshot> &snapshots);
+    std::vector<CurveLockSnapshot> locksBefore, locksAfter;
     
     MAnimCurveChange animCurveChange;
     int startTime, endTime;

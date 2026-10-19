@@ -15,18 +15,25 @@ Features:
 
 ## Curve fitting
 
-Reduction uses reversible native Maya key removal and evaluates the resulting
-interpolated curve against reference samples, rather than measuring key positions
-against straight lines. Automatic/spline/clamped/plateau tangents keep their types
-and recalculate normally; fixed handles, weighting, locks and infinity settings
-remain on the original curve. Range endpoints and stepped transition boundaries
-are conservatively retained. Preview cache restoration also restores tangent types.
+Reduction compares three strategies against immutable reference samples: native tangent
+behavior, frozen original numerical tangents, and refitted handles. Non-weighted
+segments fit Hermite slopes by least squares; weighted segments also search Bezier
+handle time lengths and fit their vertical offsets. Actual Maya evaluation accepts
+or rejects each candidate. The valid result with fewer keys wins, followed by
+lower sampled error at equal key counts. This is a heuristic, not a proof of the
+globally smallest key set.
 
-`Value` is now sampled absolute curve-value error in scene display units (rotation
+Output tangent types are free: automatic/spline/clamped/plateau tangents may become
+Fixed, with tangent/weight locks released for independent handle fitting. Weighting
+mode, infinity settings, existing key values and times remain unchanged. Range
+endpoints and stepped transition boundaries are retained, and out-of-range samples
+are checked for changes beyond numerical round-off. Undo and preview cache restore
+the original tangent types, weights and locks.
+
+`Value` is sampled absolute curve-value error in scene display units (rotation
 uses the scene angle unit, translation the scene length unit). Original key times
-and 8-64 samples per original span, plus near-boundary samples, are checked with a
-small safety margin. This is finite sampling, not an analytic maximum-error proof.
-It may keep more keys than the old straight-line method to preserve interpolation.
+and 8-64 subdivisions per original span, plus near-boundary samples, are checked
+with a small safety margin. Finite sampling is not an analytic maximum-error proof.
 Pre Bake compares against its resampled reference. Align Keys is a separate
 insertion step and may adjust neighboring tangent types to preserve curve shape.
 
@@ -136,6 +143,9 @@ and repeated UI opening.
 Alignment checks cover the retained-time union, subframes, negative times,
 different curve extents, single-key curves, range boundaries, weighted curve
 shape, preview undo and Pre Bake at 25/30/60 fps.
+Fitting regressions check improved key counts against native/frozen baselines,
+weighted handle adjustment, dense subframe error, out-of-range shape protection,
+and restoration of original types, weights and locks on Undo/Redo.
 For Python 2 on Maya 2022, run the same command using `mayapy2.exe` with
 `MAYA_PYTHON_VERSION=2` and a separate `MAYA_APP_DIR`.
 

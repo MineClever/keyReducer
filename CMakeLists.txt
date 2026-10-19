@@ -10,8 +10,10 @@ include("$ENV{DEVKIT_LOCATION}/cmake/pluginEntry.cmake")
 set(SOURCE_FILES
     source/PluginMain.cpp
     source/keyReducerCmd.cpp
+    source/curveFitting.cpp
     source/restoreKeys.cpp
     include/keyReducerCmd.h
+    include/curveFitting.h
     include/restoreKeys.h
 )
 set(INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include")

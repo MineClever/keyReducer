@@ -457,6 +457,9 @@ class TangentReductionTests(CurveTestCase):
         original_types = cmds.keyTangent(attr, query=True, outTangentType=True)
         original_times = self.times(attr)
         original_angles = cmds.keyTangent(attr, query=True, outAngle=True)
+        original_weights = cmds.keyTangent(attr, query=True, outWeight=True)
+        original_locks = cmds.keyTangent(attr, query=True, lock=True)
+        original_weight_locks = cmds.keyTangent(attr, query=True, weightLock=True)
         tolerance = 0.05
         cmds.flushUndo()
         if preview:
@@ -468,10 +471,11 @@ class TangentReductionTests(CurveTestCase):
                 self.assertAlmostEqual(actual, expected, places=7)
         cmds.tcKeyReducer(attr, value=tolerance)
         self.assertLess(len(self.times(attr)), len(original_times))
-        self.assertEqual(set(cmds.keyTangent(attr, query=True, inTangentType=True)), set([tangent]))
-        self.assertEqual(set(cmds.keyTangent(attr, query=True, outTangentType=True)), set([tangent]))
+        reduced_values = self.values(attr, samples)
+        reduced_locks = cmds.keyTangent(attr, query=True, lock=True)
+        reduced_weight_locks = cmds.keyTangent(attr, query=True, weightLock=True)
         error = max(abs(actual - expected)
-                    for actual, expected in zip(self.values(attr, samples), reference))
+                    for actual, expected in zip(reduced_values, reference))
         self.assertLessEqual(error, tolerance + 1.0e-6, 'dense curve error: {0}'.format(error))
         reduced_times = self.times(attr)
         cmds.undo()
@@ -479,16 +483,59 @@ class TangentReductionTests(CurveTestCase):
         self.assertEqual(cmds.keyTangent(attr, query=True, outTangentType=True), original_types)
         for actual, expected in zip(cmds.keyTangent(attr, query=True, outAngle=True), original_angles):
             self.assertAlmostEqual(actual, expected, places=6)
+        for actual, expected in zip(cmds.keyTangent(attr, query=True, outWeight=True), original_weights):
+            self.assertAlmostEqual(actual, expected, places=6)
+        self.assertEqual(cmds.keyTangent(attr, query=True, lock=True), original_locks)
+        self.assertEqual(cmds.keyTangent(attr, query=True, weightLock=True), original_weight_locks)
         for actual, expected in zip(self.values(attr, samples), reference):
             self.assertAlmostEqual(actual, expected, places=7)
         cmds.redo()
         self.assertEqual(self.times(attr), reduced_times)
+        self.assertEqual(cmds.keyTangent(attr, query=True, lock=True), reduced_locks)
+        self.assertEqual(cmds.keyTangent(attr, query=True, weightLock=True), reduced_weight_locks)
+        self.assertLess(max(abs(a - b) for a, b in zip(self.values(attr, samples), reduced_values)), 1.0e-6)
 
-    def test_auto_fit_and_types(self):
+    def test_auto_fit_and_undo_restores_types(self):
         self.check_fit('auto')
 
     def test_weighted_auto_fit(self):
         self.check_fit('auto', weighted=True)
+
+    def test_weighted_handle_lengths_and_directions_are_fitted(self):
+        attr = self.curve('translateX', list(range(41)),
+                          [10 * math.sin(time * 0.23) + 2 * math.cos(time * 0.57)
+                           for time in range(41)])
+        cmds.keyTangent(attr, weightedTangents=True)
+        cmds.keyTangent(attr, inTangentType='auto', outTangentType='auto')
+        weights = dict(zip(self.times(attr), cmds.keyTangent(attr, query=True, outWeight=True)))
+        samples = [index / 64.0 for index in range(40 * 64 + 1)]
+        values = self.values(attr, samples)
+        cmds.tcKeyReducer(attr, value=0.05)
+        # Frozen original weighted handles needed 33 keys and type-preserving
+        # removal needed 32. Refitting must improve on both without excess error.
+        self.assertLess(len(self.times(attr)), 32)
+        self.assertIn('fixed', cmds.keyTangent(attr, query=True, outTangentType=True))
+        fitted = zip(self.times(attr), cmds.keyTangent(attr, query=True, outWeight=True))
+        self.assertTrue(any(abs(weight - weights[time]) > 1.0e-4 for time, weight in fitted))
+        self.assertLessEqual(max(abs(a - b) for a, b in zip(self.values(attr, samples), values)), 0.05)
+
+    def test_frozen_candidate_reduces_more_than_type_preservation(self):
+        attr = self.curve('translateX', list(range(201)),
+                          [10 * math.sin(time * 0.04) + 2 * math.cos(time * 0.11)
+                           for time in range(201)])
+        cmds.keyTangent(attr, inTangentType='auto', outTangentType='auto')
+        samples = [index / 16.0 for index in range(200 * 16 + 1)]
+        values = self.values(attr, samples)
+        cmds.flushUndo()
+        cmds.tcKeyReducer(attr, value=0.05)
+        # The evaluated frozen-handle baseline needs 14 keys; the old
+        # type-preserving strategy needed 35 for this same reference.
+        self.assertLessEqual(len(self.times(attr)), 14)
+        self.assertIn('fixed', cmds.keyTangent(attr, query=True, outTangentType=True))
+        self.assertLessEqual(max(abs(a - b) for a, b in zip(self.values(attr, samples), values)), 0.05)
+        cmds.undo()
+        self.assertEqual(len(self.times(attr)), 201)
+        self.assertEqual(set(cmds.keyTangent(attr, query=True, outTangentType=True)), set(['auto']))
 
     def test_weighted_fixed_cache_restores_handles(self):
         attr = self.curve('translateX', list(range(9)),
@@ -542,6 +589,9 @@ class TangentReductionTests(CurveTestCase):
         self.assertEqual([time for time in self.times(attr) if time <= 4 or time >= 15],
                          list(range(5)) + list(range(15, 21)))
         self.assertLessEqual(max(abs(a - b) for a, b in zip(self.values(attr, samples), values)), 0.05)
+        outside = [index for index, time in enumerate(samples) if time < 4 or time > 15]
+        actual = self.values(attr, samples)
+        self.assertLessEqual(max(abs(actual[index] - values[index]) for index in outside), 1.0e-6)
 
 
 if __name__ == '__main__':

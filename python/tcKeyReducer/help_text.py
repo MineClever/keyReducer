@@ -36,27 +36,31 @@ li { margin-bottom: 8px; } .en { color: #888; }
 <br/>Clean up baked or densely keyed animation by removing redundant keys while trying to retain its shape.</p>
 
 <h2>1. 工作原理 / How it works</h2>
-<p>工具逐条处理选中对象的动画属性，缓存原曲线在关键帧和帧间采样点上的数值，
-然后使用 Maya 原生 API 逐个试删中间关键帧，让 Auto、Spline、Clamped、Plateau 等切线
-根据新的邻居正常计算。只有与原曲线的采样误差满足 Value 容差时才接受删键，否则恢复该键。
-处理范围内的首尾键及 Step / StepNext 跳变边界保守保留。</p>
-<p>Each animated channel is sampled at original keys and between keys. Maya's native API
-tries removing interior keys, letting Auto, Spline, Clamped and Plateau tangents update from
-new neighbors. A deletion is accepted only if sampled differences from the original curve
-satisfy Value; otherwise it is reverted. Range endpoints and Step / StepNext boundaries are
-conservatively retained.</p>
-<p>工具直接保留原曲线的切线类型、固定切线手柄、加权状态、锁定信息与无穷设置，
-不再按直线距离拟合，也不会在普通减键时把自动切线转换成固定切线。Value 使用场景显示单位，
-例如旋转使用场景角度单位，位移使用场景长度单位。采样包括每个原始段内的子帧检查，
-但不是连续曲线的严格最大误差证明；特别尖锐的加权段仍应播放检查。
-Pre Bake 启用时会先重新采样，其切线变化属于烘焙行为。</p>
-<p>The original curve retains its tangent types, fixed handles, weighting, locks and infinity
-settings. Reduction checks the actual interpolated curve rather than straight-line distances;
-ordinary reduction does not convert automatic tangents to fixed. Value uses scene display
-units, such as degrees for rotations and scene length units for translations. Subframe
-checks are included in each original segment, but finite sampling is not an analytic error
-bound; inspect especially sharp weighted spans. With Pre Bake enabled, the reference is the
-resampled curve and baking can change tangents.</p>
+<p>工具以原曲线在关键帧与帧间采样点上的数值作为固定参考，分别尝试三种减键策略：
+保留原切线行为、固定原数值切线、重新拟合两端手柄。非加权曲线拟合 Hermite 斜率；
+加权曲线同时尝试 Bézier 手柄长度与方向。所有候选都使用 Maya 实际插值检查误差，
+在满足 Value 容差的结果中选择键数更少的方案，同等键数时选择误差更小的方案。</p>
+<p>The original curve's key and subframe samples are an immutable reference. Three strategies
+are tried: native tangent behavior, frozen original handles, and refitted endpoint handles.
+Non-weighted curves fit Hermite slopes; weighted curves also try Bezier handle lengths and
+directions. All candidates are validated with actual Maya evaluation. Among results satisfying
+Value, fewer keys win; equal key counts are resolved by lower sampled error.</p>
+<p>输出优先保留曲线形状，允许 Auto、Spline、Clamped、Plateau 等切线转为 Fixed，
+也可能解锁切线和权重以独立拟合两侧手柄。加权模式和无穷设置保留，关键帧数值和时间不移动；
+处理范围内的首尾键与 Step / StepNext 跳变边界保守保留，并检查范围外插值。
+Undo 与预览缓存恢复会恢复原来的关键帧、切线类型、权重及锁定状态。</p>
+<p>Output prioritizes shape: Auto, Spline, Clamped and Plateau tangents may become Fixed,
+and tangent/weight locks may be released for independent handle fitting. Weighting mode and
+infinity settings are preserved; existing key values and times are not moved. Range endpoints
+and Step / StepNext boundaries are retained, with checks on interpolation outside the range.
+Undo and preview-cache restoration restore the original keys, types, weights and locks.</p>
+<p>Value 使用场景显示单位，例如旋转使用场景角度单位，位移使用场景长度单位。
+包含子帧的有限采样不是连续曲线的严格最大误差证明，特别尖锐的加权段仍应播放检查。
+三种策略也不保证全局最少键数。Pre Bake 启用时参考曲线为烘焙后的结果。</p>
+<p>Value uses scene display units, such as degrees for rotations and scene length units for
+translations. Finite subframe sampling is not an analytic error bound; inspect sharp weighted
+spans. The three strategies do not guarantee globally minimal key counts. With Pre Bake,
+the reference is the resampled curve.</p>
 
 <h2>2. 参数与属性 / Parameters and channels</h2>
 <ul>

@@ -3,14 +3,13 @@
 #include <maya/MPlug.h>
 #include <maya/MFnDependencyNode.h>
 #include <maya/MAnimControl.h>
-#include <maya/MAngle.h>
-#include <maya/MDistance.h>
 #include <cmath>
 #include <algorithm>
 #include <map>
 #include <set>
 
 #include "keyReducerCmd.h"
+#include "curveFitting.h"
 
 
 void* KeyReducerCmd::creator()
@@ -121,10 +120,12 @@ MStatus KeyReducerCmd::doIt(const MArgList& args)
         if (std::find(curves.begin(), curves.end(), object) != curves.end())
             continue;
         curves.push_back(object);
+        locksBefore.push_back(CurveLockSnapshot{object, KeyReducerDetail::captureLocks(fnCurve)});
         status = keyReduce(fnCurve);
         if (!status)
         {
             animCurveChange.undoIt();
+            restoreCurveLocks(locksBefore);
             return status;
         }
 	}
@@ -135,11 +136,17 @@ MStatus KeyReducerCmd::doIt(const MArgList& args)
         if (!status)
         {
             animCurveChange.undoIt();
+            restoreCurveLocks(locksBefore);
             MGlobal::displayError("tcKeyReducer: could not align key times; changes were reverted.");
             return status;
         }
     }
-	return MS::kSuccess;
+    for (const MObject &object : curves)
+    {
+        MFnAnimCurve curve(object);
+        locksAfter.push_back(CurveLockSnapshot{object, KeyReducerDetail::captureLocks(curve)});
+    }
+    return MS::kSuccess;
 }
 
 MStatus KeyReducerCmd::alignKeyTimes(const std::vector<MObject> &curves)
@@ -218,77 +225,6 @@ bool KeyReducerCmd::isBeforeEndTime(const MTime &time)
     return time.as(MTime::uiUnit()) <= endTime;
 }
 
-namespace KeyReducerDetail
-{
-struct CurveSample
-{
-    MTime time;
-    double value;
-};
-
-// animx documents neighbor-dependent auto slopes and weighted Bezier vs.
-// non-weighted Hermite evaluation. Let this Maya version evaluate those rules.
-double displayValueScale(const MFnAnimCurve &curve)
-{
-    switch (curve.animCurveType())
-    {
-    case MFnAnimCurve::kAnimCurveTA:
-        return MAngle(1.0, MAngle::kRadians).as(MAngle::uiUnit());
-    case MFnAnimCurve::kAnimCurveTL:
-        return MDistance(1.0, MDistance::kCentimeters).as(MDistance::uiUnit());
-    case MFnAnimCurve::kAnimCurveTT:
-        return MTime(1.0, MTime::kSeconds).as(MTime::uiUnit());
-    default:
-        return 1.0;
-    }
-}
-
-std::vector<CurveSample> sampleReference(const MFnAnimCurve &curve)
-{
-    std::set<MTime> times;
-    for (unsigned int index = 0; index < curve.numKeys(); ++index)
-    {
-        const MTime begin = curve.time(index);
-        times.insert(begin);
-        if (index + 1 == curve.numKeys())
-            break;
-        const MTime end = curve.time(index + 1);
-        const double first = begin.as(MTime::kSeconds);
-        const double duration = end.as(MTime::kSeconds) - first;
-        const double frames = end.as(MTime::uiUnit()) - begin.as(MTime::uiUnit());
-        const int steps = static_cast<int>(std::max(8.0, std::min(64.0, std::ceil(frames * 8.0))));
-        for (int step = 1; step < steps; ++step)
-            times.insert(MTime(first + duration * step / steps, MTime::kSeconds));
-        times.insert(MTime(first + duration / 1024.0, MTime::kSeconds));
-        times.insert(MTime(first + duration * 1023.0 / 1024.0, MTime::kSeconds));
-    }
-    std::vector<CurveSample> samples;
-    samples.reserve(times.size());
-    for (const MTime &time : times)
-        samples.push_back(CurveSample{time, curve.evaluate(time)});
-    return samples;
-}
-
-bool fitsReference(const MFnAnimCurve &curve, const std::vector<CurveSample> &samples,
-                   double scale, double tolerance)
-{
-    for (const CurveSample &sample : samples)
-    {
-        MStatus status;
-        const double value = curve.evaluate(sample.time, &status);
-        if (!status || !std::isfinite(value) ||
-            std::fabs(value - sample.value) * scale > tolerance)
-            return false;
-    }
-    return true;
-}
-
-bool stepped(MFnAnimCurve::TangentType type)
-{
-    return type == MFnAnimCurve::kTangentStep || type == MFnAnimCurve::kTangentStepNext;
-}
-}
-
 void KeyReducerCmd::sampleCurve(MFnAnimCurve &curve)
 {
     int min = hasStartTime? startTime: curve.time(0).as(MTime::uiUnit());
@@ -337,52 +273,32 @@ MStatus KeyReducerCmd::keyReduce(MFnAnimCurve &curve)
     if (eligible.size() <= 2)
         return MS::kSuccess;
 
-    const std::vector<KeyReducerDetail::CurveSample> reference = KeyReducerDetail::sampleReference(curve);
-    const double scale = KeyReducerDetail::displayValueScale(curve);
-    // Sampling is not an analytic error bound. Reserve a small margin for
-    // extrema between validation samples, and allow only numeric noise at zero.
-    const double tolerance = std::max(1.0e-10, deviation * 0.95);
-    for (unsigned int index = 1; index + 1 < curve.numKeys(); )
-    {
-        const MTime time = curve.time(index);
-        if (time <= eligible.front() || time >= eligible.back() ||
-            KeyReducerDetail::stepped(curve.outTangentType(index - 1)) ||
-            KeyReducerDetail::stepped(curve.inTangentType(index)) || KeyReducerDetail::stepped(curve.outTangentType(index)))
-        {
-            ++index;
-            continue;
-        }
-        // Native reversible edits preserve Maya's complete tangent state,
-        // including weighted fixed handles, without reconstructing the curve.
-        MAnimCurveChange trial;
-        MStatus status = curve.remove(index, &trial);
-        if (!status)
-            return status;
-        const bool accepted = KeyReducerDetail::fitsReference(curve, reference, scale, tolerance);
-        status = trial.undoIt();
-        if (!status)
-            return status;
-        if (accepted)
-        {
-            status = curve.remove(index, &animCurveChange);
-            if (!status)
-                return status;
-        }
-        else
-            ++index;
-    }
-    return MS::kSuccess;
+    return KeyReducerDetail::fitReducedCurve(curve, eligible.front(), eligible.back(),
+                                             deviation, animCurveChange);
 }
 
 MStatus KeyReducerCmd::redoIt()
 {
-	animCurveChange.redoIt();
-	return MS::kSuccess;
+    const MStatus status = animCurveChange.redoIt();
+    return status ? restoreCurveLocks(locksAfter) : status;
 }
 
 MStatus KeyReducerCmd::undoIt()
 {
-    animCurveChange.undoIt();
-	return MS::kSuccess;
+    const MStatus status = animCurveChange.undoIt();
+    return status ? restoreCurveLocks(locksBefore) : status;
+}
+
+MStatus KeyReducerCmd::restoreCurveLocks(const std::vector<CurveLockSnapshot> &snapshots)
+{
+    for (const CurveLockSnapshot &snapshot : snapshots)
+    {
+        MStatus status;
+        MFnAnimCurve curve(snapshot.curve, &status);
+        if (!status) return status;
+        status = KeyReducerDetail::restoreLocks(curve, snapshot.locks);
+        if (!status) return status;
+    }
+    return MS::kSuccess;
 }
 
