@@ -5,6 +5,9 @@
 #include <maya/MAnimControl.h>
 #include <maya/MDGModifier.h>
 #include <maya/MVector.h>
+#include <algorithm>
+#include <map>
+#include <set>
 
 #include "keyReducerCmd.h"
 
@@ -42,6 +45,7 @@ MSyntax KeyReducerCmd::syntaxCreator()
 	syntax.addFlag("-et", "-endTime", MSyntax::kLong);
     syntax.addFlag("-h", "-help", MSyntax::kNoArg);
     syntax.addFlag("-pb", "-preBake", MSyntax::kNoArg);
+    syntax.addFlag("-ak", "-alignKeys", MSyntax::kNoArg);
 	
 	return syntax;
 }
@@ -54,6 +58,7 @@ MStatus KeyReducerCmd::doIt(const MArgList& args)
     if (argData.isFlagSet("-help"))
     {
         MGlobal::displayInfo("This command reduce the keys for the given animated attributes of the selected objects.\n\t args: list fo strings - the list of object attributes to evaluate, i.e. locator1.tx \n\t -value: float - the value used for the reduction. Default: 0.5\n\t -startTime: int - if specified, the keys before this frame will be ignored\n\t -endTime: int - if specified, the keys after this frame will be ignored\n\t -preBake: no arg, if specified the curve will be baked before key reducing, this will remove any broken/weighted tangents from your animation curve.");
+        MGlobal::displayInfo("\t-alignKeys (-ak): after reduction, insert missing keys so animated attributes share the union of retained key times within the processing range. Off by default; subframes are preserved.");
         return MS::kSuccess;
     }
 
@@ -108,14 +113,91 @@ MStatus KeyReducerCmd::doIt(const MArgList& args)
     }
     
     preBake = argData.isFlagSet("-preBake");
-    
+
+    std::vector<MObject> curves;
     for (unsigned int i = 0; i < plugsList.length(); ++i)
 	{
-		MFnAnimCurve fnCurve(plugsList[i]);
+        MFnAnimCurve fnCurve(plugsList[i], &status);
+        if (!status || !fnCurve.isTimeInput() || fnCurve.numKeys() == 0)
+            continue;
+        const MObject object = fnCurve.object();
+        if (std::find(curves.begin(), curves.end(), object) != curves.end())
+            continue;
+        curves.push_back(object);
 		keyReduce(fnCurve);
 	}
-    
+
+    if (argData.isFlagSet("-alignKeys"))
+    {
+        status = alignKeyTimes(curves);
+        if (!status)
+        {
+            animCurveChange.undoIt();
+            MGlobal::displayError("tcKeyReducer: could not align key times; changes were reverted.");
+            return status;
+        }
+    }
 	return MS::kSuccess;
+}
+
+MStatus KeyReducerCmd::alignKeyTimes(const std::vector<MObject> &curves)
+{
+    // Preserve MTime directly: alignment shares times across curves without
+    // rounding subframes or assuming a 24 fps timeline.
+    std::set<MTime> times;
+    for (const MObject &object : curves)
+    {
+        MFnAnimCurve curve(object);
+        for (unsigned int index = 0; index < curve.numKeys(); ++index)
+        {
+            const MTime time = curve.time(index);
+            if (isAfterStartTime(time) && isBeforeEndTime(time))
+                times.insert(time);
+        }
+    }
+
+    for (const MObject &object : curves)
+    {
+        MFnAnimCurve curve(object);
+#if MAYA_API_VERSION < 20190300
+        // Capture all missing-key values before any insertion can change the
+        // neighboring interpolation in SDKs without shape-preserving insert.
+        std::map<MTime, double> values;
+        for (const MTime &time : times)
+        {
+            unsigned int index;
+            if (!curve.find(time, index))
+            {
+                MStatus status;
+                const double value = curve.evaluate(time, &status);
+                if (!status)
+                    return status;
+                values[time] = value;
+            }
+        }
+#endif
+        for (const MTime &time : times)
+        {
+            unsigned int index;
+            if (curve.find(time, index))
+                continue;
+            MStatus status;
+#if MAYA_API_VERSION >= 20190300
+            // SDK insertion preserves the existing curve shape and records
+            // both new keys and tangent edits in the command's undo state.
+            curve.insertKey(time, false, &animCurveChange, &status);
+#else
+            // Older SDKs have no insertKey. Sample the reduced curve before
+            // adding a key; neighboring interpolation may change on these SDKs.
+            const double value = values.find(time)->second;
+            curve.addKey(time, value, MFnAnimCurve::kTangentGlobal,
+                         MFnAnimCurve::kTangentGlobal, &animCurveChange, &status);
+#endif
+            if (!status)
+                return status;
+        }
+    }
+    return MS::kSuccess;
 }
 
 bool KeyReducerCmd::isAfterStartTime(const MTime &time)
@@ -321,7 +403,7 @@ void KeyReducerCmd::sampleCurve(MFnAnimCurve &curve)
     
     for (double i = min; i <= max ; ++i)
     {
-        MTime t = i;
+        MTime t(i, MTime::uiUnit());
         values.push_back(curve.evaluate(t));
     }
     
@@ -334,7 +416,7 @@ void KeyReducerCmd::sampleCurve(MFnAnimCurve &curve)
     
     for (double i = min; i <= max ; ++i)
     {
-        MTime t = i;
+        MTime t(i, MTime::uiUnit());
         curve.addKeyframe(t, values[int(i - min)], &animCurveChange);
     }
 }

@@ -101,6 +101,11 @@ class KeyReducerControls(QtWidgets.QWidget):
         l = LineWidget("", self._pre_bake, 40)
         v_layout.addWidget(l)
 
+        self._align_keys = QtWidgets.QCheckBox("Align Keys")
+        self._align_keys.setChecked(False)
+        l = LineWidget("", self._align_keys, 40)
+        v_layout.addWidget(l)
+
         layout.addLayout(v_layout)
 
         v_layout = _build_layout(False)
@@ -402,6 +407,8 @@ class KeyReducerControls(QtWidgets.QWidget):
         kwargs = {'value': float(self._value_line_edit.text())}
         if (self._pre_bake.isChecked()):
             kwargs['preBake'] = True
+        if self._align_keys.isChecked():
+            kwargs['alignKeys'] = True
 
         if self._time_slider_button.isChecked():
             kwargs['startTime'] = cmds.playbackOptions(q=True, minTime=True)

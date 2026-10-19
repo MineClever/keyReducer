@@ -60,6 +60,10 @@ plugin search path. Loading errors propagate before the UI opens.
   update the reduction parameter.
 - **Execute** reduces the selected attributes using the current value, range,
   and Pre Bake settings.
+- **Align Keys** is off by default. It inserts keys at the union of retained
+  times across animated channels, making their key times match within the
+  processing range. It preserves subframes and does not animate static channels.
+  Alignment can add keys back after reduction; Undo restores both steps.
 - **Refresh**, before Execute, re-reads and caches the selected curves and
   rebuilds selection callbacks after a new scene or a stale UI. It remains
   enabled with no selection and does not reduce keys or restore old curves.
@@ -76,6 +80,17 @@ when no objects are selected.
 
 The UI uses Python 2/3 compatible syntax and Unicode text, with imports for
 PySide6, PySide2, and legacy PySide.
+
+The C++ command also exposes alignment directly:
+
+```python
+cmds.tcKeyReducer('pCube1.translateX', 'pCube1.translateY', value=0.5, alignKeys=True)
+```
+
+`-ak` / `-alignKeys` aligns times across channels, rather than snapping them to
+whole frames. Newer SDKs use shape-preserving key insertion; Maya SDKs older than
+2019.3 sample the reduced curve before adding keys, so neighboring interpolation
+can change. Pre Bake explicitly uses the current scene time unit at all frame rates.
 
 ## Validation
 
@@ -94,6 +109,9 @@ Execute/Undo/Redo, automatic preview undo grouping, text entry, empty selection,
 and tangent preservation. They also check bilingual tooltips, help scrolling,
 automatic loading by filename after unloading the plugin, failure propagation
 and repeated UI opening.
+Alignment checks cover the retained-time union, subframes, negative times,
+different curve extents, single-key curves, range boundaries, weighted curve
+shape, preview undo and Pre Bake at 25/30/60 fps.
 For Python 2 on Maya 2022, run the same command using `mayapy2.exe` with
 `MAYA_PYTHON_VERSION=2` and a separate `MAYA_APP_DIR`.
 

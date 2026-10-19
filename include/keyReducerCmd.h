@@ -48,6 +48,7 @@ private:
     void getBoundaries(const MIntArray &keys, const MFnAnimCurve &fnCurve, const int &currentIndex, double &x1, double &y1,double &x2, double &y2);
     double getValue(const double &x1, const double &y1, const double &x2, const double &y2, const double &x3, const double &y3);
     void sampleCurve(MFnAnimCurve &curve);
+    MStatus alignKeyTimes(const std::vector<MObject> &curves);
     
     MAnimCurveChange animCurveChange;
     int startTime, endTime;

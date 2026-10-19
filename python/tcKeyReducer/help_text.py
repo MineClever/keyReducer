@@ -7,6 +7,7 @@ TOOLTIPS = {
     '_min_value': u'滑块可调整的最小 Value，不是动画的起始帧。\nMinimum Value available on the slider, not the animation start frame.',
     '_max_value': u'滑块可调整的最大 Value，不是动画的结束帧。\nMaximum Value available on the slider, not the animation end frame.',
     '_pre_bake': u'先在处理范围内按整帧采样，并将曲线改为非加权切线，再执行减键；可能改变原有切线与子帧细节。\nSample at whole frames in the processing range and make the curve non-weighted before reduction. May change tangents and subframe details.',
+    '_align_keys': u'默认关闭。减键后取所有处理曲线保留时间点的并集，给其他曲线补键，使各属性在处理范围内的关键帧时间一致。保留小数帧；不为静态属性创建动画。键数会增加，补键可能影响插值。\nOff by default. After reduction, insert missing keys at the union of retained times so animated channels share key times within the range. Preserves subframes; does not animate static channels. Adds keys and may affect interpolation.',
     '_all_attrs_button': u'处理选中对象的所有可设置关键帧的属性；没有动画的属性不会产生减键结果。\nProcess all keyable attributes on selected objects. Attributes without animation have no keys to reduce.',
     '_graph_editor_selection': u'从默认 Graph Editor 当前显示的曲线获取连接属性名，再应用到选中对象；不是只处理高亮的关键帧。\nUse connected channel names from curves shown in the default Graph Editor on selected objects, not just highlighted keys.',
     '_channel_box_selection': u'处理 Channel Box 选中的属性；没有选中属性时回退为 All。\nProcess channels selected in the Channel Box. Falls back to All when no channels are selected.',
@@ -57,6 +58,15 @@ curve shape affect the result, so inspect both playback and the curves.</p>
 <ul>
 <li><b>Value / Slider：</b>容差及其滑块；Min / Max 仅改变滑块数值范围，不是动画帧范围。<br/>
 Tolerance and its slider. Min / Max limit the slider values, not the animation frames.</li>
+<li><b>Align Keys：</b>默认关闭。先分别减键，再取所有参与处理的动画属性的保留时间点并集，
+在其他曲线上补上缺少的键，使处理范围内的键时间一致。此选项不移动现有时间点、不取整小数帧，
+也不为静态属性创建动画；补键后总键数可能比单独减键更多。新键依据减键后的曲线插值，
+旧版 Maya 的补键可能改变相邻插值，应检查播放结果。撤销会同时恢复减键和补键。<br/>
+Off by default. Reduce channels separately, then insert missing keys at the union of retained
+times across participating animated channels. Key times match within the processing range.
+Existing times and subframes are preserved; static channels are not animated. This may retain
+more keys than independent reduction. Insertions follow the reduced curve; older Maya versions
+may change neighboring interpolation, so check playback. Undo restores reduction and alignment together.</li>
 <li><b>Pre Bake：</b>先在处理范围内逐整帧采样，并将动画曲线改为非加权，再执行简化。
 适合先统一烘焙密集动画；可能改变原有切线与子帧细节，非加权设置会影响整条曲线。<br/>
 Sample whole frames within the processing range and make the curve non-weighted before reduction.

@@ -45,6 +45,7 @@ class KeyReducerUiTests(unittest.TestCase):
 
     def test_manual_changes_do_not_execute(self):
         self.assertFalse(self.controls._auto_execute.isChecked())
+        self.assertFalse(self.controls._align_keys.isChecked())
         self.drag(7000)
         self.controls._value_line_edit.setText('0.3')
         self.controls._value_line_edit_finished()
@@ -60,6 +61,26 @@ class KeyReducerUiTests(unittest.TestCase):
         self.assertEqual(self.count(), 10)
         cmds.redo()
         self.assertEqual(self.count(), 2)
+
+    def test_alignment_checkbox_execute_preview_and_undo(self):
+        for frame in range(1, 11):
+            cmds.setKeyframe(self.obj, attribute='translateY', time=frame,
+                             value=5 if frame == 7 else 0)
+        cmds.flushUndo()
+        self.controls._align_keys.setChecked(True)
+        self.assertEqual(self.count(), 10)
+        self.controls._execute_button.click()
+        times = lambda attr: cmds.keyframe(self.obj, attribute=attr, query=True, timeChange=True)
+        self.assertEqual(times('translateX'), times('translateY'))
+        self.controls._undo_button.click()
+        self.assertEqual(len(times('translateX')), 10)
+        self.assertEqual(len(times('translateY')), 10)
+        self.controls._auto_execute.setChecked(True)
+        self.drag(6000)
+        self.assertEqual(times('translateX'), times('translateY'))
+        self.controls._undo_button.click()
+        self.assertEqual(len(times('translateX')), 10)
+        self.assertEqual(len(times('translateY')), 10)
 
     def test_auto_drag_is_one_undo(self):
         self.controls._auto_execute.setChecked(True)
@@ -282,8 +303,123 @@ class KeyReducerUiTests(unittest.TestCase):
             ui.cmds = original
 
 
+class KeyAlignmentTests(unittest.TestCase):
+    def setUp(self):
+        self.original_unit = cmds.currentUnit(query=True, time=True)
+        cmds.file(new=True, force=True)
+        cmds.currentUnit(time='film', updateAnimation=False)
+        cmds.undoInfo(state=True)
+        self.node = cmds.createNode('transform', name='alignmentTest')
+
+    def tearDown(self):
+        cmds.currentUnit(time=self.original_unit, updateAnimation=False)
+
+    def curve(self, attr, times, values):
+        for time, value in zip(times, values):
+            cmds.setKeyframe(self.node, attribute=attr, time=time, value=value)
+        cmds.keyTangent(self.node, attribute=attr, inTangentType='linear', outTangentType='linear')
+        return self.node + '.' + attr
+
+    def times(self, attr):
+        return cmds.keyframe(attr, query=True, timeChange=True) or []
+
+    def values(self, attr, samples):
+        return [cmds.getAttr(attr, time=time) for time in samples]
+
+    def check_union_and_shape(self, weighted):
+        times = list(range(1, 10))
+        x = self.curve('translateX', times, [5 if time == 3 else 0 for time in times])
+        y = self.curve('translateY', times, [5 if time == 7 else 0 for time in times])
+        for attr in (x, y):
+            cmds.keyTangent(attr, weightedTangents=weighted)
+            if weighted:
+                cmds.keyTangent(attr, inTangentType='fixed', outTangentType='fixed',
+                                inAngle=15, outAngle=-20, inWeight=0.5, outWeight=0.7)
+        cmds.flushUndo()
+        cmds.tcKeyReducer(x, y, value=0.1)
+        self.assertNotEqual(self.times(x), self.times(y))
+        union = sorted(set(self.times(x) + self.times(y)))
+        samples = [1 + index / 16.0 for index in range(129)]
+        before_x = self.values(x, samples)
+        before_y = self.values(y, samples)
+        cmds.undo()
+        cmds.tcKeyReducer(x, y, value=0.1, alignKeys=True)
+        self.assertEqual(self.times(x), union)
+        self.assertEqual(self.times(y), union)
+        for attr, expected in ((x, before_x), (y, before_y)):
+            for actual, value in zip(self.values(attr, samples), expected):
+                self.assertAlmostEqual(actual, value, places=5)
+        self.assertFalse(cmds.listConnections(self.node + '.translateZ', source=True, type='animCurve'))
+        cmds.undo()
+        self.assertEqual(self.times(x), times)
+        self.assertEqual(self.times(y), times)
+        cmds.redo()
+        self.assertEqual(self.times(x), union)
+        self.assertEqual(self.times(y), union)
+
+    def test_union_shape_and_undo(self):
+        self.check_union_and_shape(False)
+
+    def test_weighted_union_shape_and_undo(self):
+        self.check_union_and_shape(True)
+
+    def test_negative_subframes_and_different_extents(self):
+        x = self.curve('translateX', [-2.25, 0.75], [-2, 2])
+        y = self.curve('translateY', [-1.5, 2.5], [0, 3])
+        cmds.flushUndo()
+        cmds.tcKeyReducer(x, y, alignKeys=True)
+        union = [-2.25, -1.5, 0.75, 2.5]
+        self.assertEqual(self.times(x), union)
+        self.assertEqual(self.times(y), union)
+        cmds.undo()
+        self.assertEqual(self.times(x), [-2.25, 0.75])
+        self.assertEqual(self.times(y), [-1.5, 2.5])
+
+    def test_single_key_and_duplicate_channel(self):
+        x = self.curve('translateX', [2], [3])
+        y = self.curve('translateY', [1, 3], [5, 6])
+        cmds.tcKeyReducer(x, x, y, alignKeys=True)
+        self.assertEqual(self.times(x), [1, 2, 3])
+        self.assertEqual(self.times(y), [1, 2, 3])
+
+    def test_alignment_respects_range(self):
+        x = self.curve('translateX', [-2, 0, 2, 4, 8], [-2, 0, 2, 4, 8])
+        y = self.curve('translateY', [-1, 1, 3, 5, 9], [-1, 1, 3, 5, 9])
+        cmds.flushUndo()
+        cmds.tcKeyReducer(x, y, startTime=0, endTime=5, alignKeys=True)
+        inside = lambda attr: [time for time in self.times(attr) if 0 <= time <= 5]
+        self.assertEqual(inside(x), [0, 1, 4, 5])
+        self.assertEqual(inside(y), [0, 1, 4, 5])
+        self.assertEqual([time for time in self.times(x) if time < 0 or time > 5], [-2, 8])
+        self.assertEqual([time for time in self.times(y) if time < 0 or time > 5], [-1, 9])
+
+    def test_pre_bake_uses_scene_frame_rate(self):
+        for unit in ('pal', 'ntsc', 'ntscf'):
+            cmds.file(new=True, force=True)
+            cmds.currentUnit(time=unit, updateAnimation=False)
+            self.node = cmds.createNode('transform', name='alignmentTest')
+            x = self.curve('translateX', [1, 4, 10], [0, 8, -1])
+            y = self.curve('translateY', [1, 6, 10], [2, -4, 7])
+            cmds.tcKeyReducer(x, y, value=0, preBake=True, alignKeys=True)
+            self.assertEqual(self.times(x), self.times(y))
+            self.assertEqual(self.times(x)[0], 1)
+            self.assertEqual(self.times(x)[-1], 10)
+            for attr in (x, y):
+                for time in self.times(attr):
+                    self.assertAlmostEqual(time, round(time), places=6)
+            # Retained input knots must be sampled in the actual scene unit.
+            # Intermediate curve interpolation is allowed to change in reduction.
+            for attr, knots in ((x, [(1, 0), (4, 8), (10, -1)]),
+                                (y, [(1, 2), (6, -4), (10, 7)])):
+                for time, value in knots:
+                    self.assertAlmostEqual(cmds.getAttr(attr, time=time), value, places=5)
+
+
 if __name__ == '__main__':
-    suite = unittest.defaultTestLoader.loadTestsFromTestCase(KeyReducerUiTests)
+    suite = unittest.TestSuite([
+        unittest.defaultTestLoader.loadTestsFromTestCase(KeyReducerUiTests),
+        unittest.defaultTestLoader.loadTestsFromTestCase(KeyAlignmentTests),
+    ])
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     maya.standalone.uninitialize()
     sys.exit(0 if result.wasSuccessful() else 1)
