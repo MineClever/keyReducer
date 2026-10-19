@@ -220,6 +220,16 @@ bool RestoreKeysCmd::restoreCurve(const Curve &c_obj)
         curve.setTangentsLocked(index, key->tangentsLocked, &animCurveChange);
         curve.setWeightsLocked(index, key->weightLocked, &animCurveChange);
     }
+
+    // Explicit tangent vectors can convert procedural tangents to Fixed.
+    // Restore their types after all keys and vectors are present so previews
+    // keep Auto/Spline/Clamped/Plateau behavior on every restore.
+    for (int index = 0; index < c_obj.keys.size(); index++)
+    {
+        const Key &key = c_obj.keys[index];
+        curve.setInTangentType(index, key.inTType, &animCurveChange);
+        curve.setOutTangentType(index, key.outTType, &animCurveChange);
+    }
     
     return true;
 }

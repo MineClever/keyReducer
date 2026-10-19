@@ -3,23 +3,15 @@
 #include <maya/MPlug.h>
 #include <maya/MFnDependencyNode.h>
 #include <maya/MAnimControl.h>
-#include <maya/MDGModifier.h>
-#include <maya/MVector.h>
+#include <maya/MAngle.h>
+#include <maya/MDistance.h>
+#include <cmath>
 #include <algorithm>
 #include <map>
 #include <set>
 
 #include "keyReducerCmd.h"
 
-
-MString doubleToMString(double value)
-{
-	char* buffer = new char[sizeof(double)];
-	
-	sprintf(buffer, "%f", value);
-	
-	return MString(buffer);
-}
 
 void* KeyReducerCmd::creator()
 {
@@ -57,7 +49,7 @@ MStatus KeyReducerCmd::doIt(const MArgList& args)
     
     if (argData.isFlagSet("-help"))
     {
-        MGlobal::displayInfo("This command reduce the keys for the given animated attributes of the selected objects.\n\t args: list fo strings - the list of object attributes to evaluate, i.e. locator1.tx \n\t -value: float - the value used for the reduction. Default: 0.5\n\t -startTime: int - if specified, the keys before this frame will be ignored\n\t -endTime: int - if specified, the keys after this frame will be ignored\n\t -preBake: no arg, if specified the curve will be baked before key reducing, this will remove any broken/weighted tangents from your animation curve.");
+        MGlobal::displayInfo("This command reduce the keys for the given animated attributes of the selected objects.\n\t args: list fo strings - the list of object attributes to evaluate, i.e. locator1.tx \n\t -value: float - sampled curve-value error tolerance in scene display units. Default: 0.5\n\t -startTime: int - if specified, the keys before this frame will be ignored\n\t -endTime: int - if specified, the keys after this frame will be ignored\n\t -preBake: no arg, if specified the curve will be baked before key reducing, this will remove any broken/weighted tangents from your animation curve.");
         MGlobal::displayInfo("\t-alignKeys (-ak): after reduction, insert missing keys so animated attributes share the union of retained key times within the processing range. Off by default; subframes are preserved.");
         return MS::kSuccess;
     }
@@ -97,7 +89,12 @@ MStatus KeyReducerCmd::doIt(const MArgList& args)
 		argData.getFlagArgument("-value", 0, deviation);
     else
         deviation = 0.5;
-    
+    if (!std::isfinite(deviation) || deviation < 0.0)
+    {
+        MGlobal::displayError("tcKeyReducer: value must be finite and nonnegative.");
+        return MS::kFailure;
+    }
+
     hasStartTime = false;
     hasEndTime = false;
 	if (argData.isFlagSet("-startTime"))
@@ -124,7 +121,12 @@ MStatus KeyReducerCmd::doIt(const MArgList& args)
         if (std::find(curves.begin(), curves.end(), object) != curves.end())
             continue;
         curves.push_back(object);
-		keyReduce(fnCurve);
+        status = keyReduce(fnCurve);
+        if (!status)
+        {
+            animCurveChange.undoIt();
+            return status;
+        }
 	}
 
     if (argData.isFlagSet("-alignKeys"))
@@ -216,181 +218,75 @@ bool KeyReducerCmd::isBeforeEndTime(const MTime &time)
     return time.as(MTime::uiUnit()) <= endTime;
 }
 
-void KeyReducerCmd::addIndex(MIntArray &array, const int index)
+namespace KeyReducerDetail
 {
-	for (unsigned int keysIndex = 0; keysIndex < array.length() - 1; ++keysIndex)
-		if (index > array[keysIndex] && index < array[keysIndex + 1])
-			array.insert(index, keysIndex + 1);
-}
+struct CurveSample
+{
+    MTime time;
+    double value;
+};
 
-int KeyReducerCmd::getIndexInArray(const MIntArray &array, const int &val)
+// animx documents neighbor-dependent auto slopes and weighted Bezier vs.
+// non-weighted Hermite evaluation. Let this Maya version evaluate those rules.
+double displayValueScale(const MFnAnimCurve &curve)
 {
-	for (unsigned int i = 0; i < array.length(); i++)
-		if (array[i] == val) return i;
-	return -1;
-}
-
-void KeyReducerCmd::getBoundaries(const MIntArray &keys, const MFnAnimCurve &fnCurve, const int &currentIndex, double &x1, double &y1,double &x2, double &y2)
-{
-	unsigned int keysIndex;
-	for (keysIndex = 0; keysIndex < keys.length() - 1; ++keysIndex)
-		if (currentIndex > keys[keysIndex] && currentIndex < keys[keysIndex + 1])
-            break;
-	
-	x1 = fnCurve.value(keys[keysIndex]);
-	y1 = fnCurve.time(keys[keysIndex]).as(MTime::uiUnit());
-	x2 = fnCurve.value(keys[keysIndex + 1]);
-	y2 = fnCurve.time(keys[keysIndex + 1]).as(MTime::uiUnit());
-}
-
-double KeyReducerCmd::getValue(const double &x1, const double &y1, const double &x2, const double &y2, const double &x3, const double &y3)
-{
-	MVector p1(x1, y1);
-	MVector p2(x2, y2);
-	MVector p3(x3, y3);
-	
-	MVector vec = p2 - p1;
-	vec.normalize();
-	
-	double t = vec * (p3 - p1);
-	p3 = p3 - (p1 + t * vec);
-	
-	return fabs(p3.length());
-}
-
-void KeyReducerCmd::doKeyReduce(const MIntArray &sourceKeys, const MFnAnimCurve &fnCurve, MIntArray &outKeys)
-{
-	outKeys.append(sourceKeys[0]);
-	outKeys.append(sourceKeys[sourceKeys.length() - 1]);
-	
-	double currentDeviation = 1000000000;
-	int currentIndex;
-	while (currentDeviation > deviation && sourceKeys.length() != outKeys.length())
-	{
-		currentDeviation = 0;
-		currentIndex = 0;
-		
-		for (unsigned int i = 1; i < sourceKeys.length() - 1; ++i)
-		{
-			if (getIndexInArray(outKeys, sourceKeys[i]) == -1)
-			{
-				double x1, y1, x2, y2;
-				getBoundaries(outKeys, fnCurve, sourceKeys[i], x1, y1, x2, y2);
-				
-				double val = fnCurve.value(sourceKeys[i]);
-                double time = fnCurve.time(sourceKeys[i]).as(MTime::uiUnit());
-				double thisDeviation = getValue(x1, y1, x2, y2, val, time);
-				if (thisDeviation > currentDeviation)
-				{
-					currentDeviation = thisDeviation;
-					currentIndex = sourceKeys[i];
-				}
-			}
-		}
-		
-		if (currentDeviation > deviation)
-			addIndex(outKeys, currentIndex);
-	}
-}
-
-void restoreTangents(const MFnAnimCurve &fnSource, MFnAnimCurve &fnDest)
-{
-    for (unsigned int index = 0; index < fnSource.numKeys(); ++index)
+    switch (curve.animCurveType())
     {
-        MTime time = fnSource.time(index);
-        unsigned int keyID;
-        if (fnDest.find(time, keyID))
-        {
-#if MAYA_API_VERSION >= 20180000
-			MFnAnimCurve::TangentValue inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
-#else
-			float inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
-#endif
-            fnSource.getTangent(index, inXTangentValue, inYTangentValue, true);
-            fnSource.getTangent(index, outXTangentValue, outYTangentValue, false);
-            
-            fnDest.setTangentsLocked(keyID, false);
-            fnDest.setWeightsLocked(keyID, false);
-            fnDest.setTangent(keyID, inXTangentValue, inYTangentValue, true, NULL, false);
-            fnDest.setTangent(keyID, outXTangentValue, outYTangentValue, false, NULL, false);
-            fnDest.setTangentsLocked(keyID, fnSource.tangentsLocked(index));
-            fnDest.setWeightsLocked(keyID, fnSource.weightsLocked(index));
-        }
+    case MFnAnimCurve::kAnimCurveTA:
+        return MAngle(1.0, MAngle::kRadians).as(MAngle::uiUnit());
+    case MFnAnimCurve::kAnimCurveTL:
+        return MDistance(1.0, MDistance::kCentimeters).as(MDistance::uiUnit());
+    case MFnAnimCurve::kAnimCurveTT:
+        return MTime(1.0, MTime::kSeconds).as(MTime::uiUnit());
+    default:
+        return 1.0;
     }
 }
 
-void copyKey(const int index, const MFnAnimCurve &fnSource, MFnAnimCurve &fnDest,  MAnimCurveChange  *change)
+std::vector<CurveSample> sampleReference(const MFnAnimCurve &curve)
 {
-	MTime time = fnSource.time(index);
-	double val = fnSource.value(index);
-	
-	MFnAnimCurve::TangentType inTType = fnSource.inTangentType(index);
-	MFnAnimCurve::TangentType outTType = fnSource.outTangentType(index);
-    
-#if MAYA_API_VERSION >= 20180000
-	MFnAnimCurve::TangentValue inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
-#else
-	float inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
-#endif
-	
-	fnSource.getTangent(index, inXTangentValue, inYTangentValue, true);
-	fnSource.getTangent(index, outXTangentValue, outYTangentValue, false);
-	
-	unsigned int newKeyIndex = fnDest.addKey(time, val, inTType,  outTType, change);
-    fnDest.setTangentsLocked(newKeyIndex, false);
-    fnDest.setWeightsLocked(newKeyIndex, false);
-	fnDest.setTangent(newKeyIndex, inXTangentValue, inYTangentValue, true, change, false);
-	fnDest.setTangent(newKeyIndex, outXTangentValue, outYTangentValue, false, change, false);
-    fnDest.setTangentsLocked(newKeyIndex, fnSource.tangentsLocked(index));
-    fnDest.setWeightsLocked(newKeyIndex, fnSource.weightsLocked(index));
+    std::set<MTime> times;
+    for (unsigned int index = 0; index < curve.numKeys(); ++index)
+    {
+        const MTime begin = curve.time(index);
+        times.insert(begin);
+        if (index + 1 == curve.numKeys())
+            break;
+        const MTime end = curve.time(index + 1);
+        const double first = begin.as(MTime::kSeconds);
+        const double duration = end.as(MTime::kSeconds) - first;
+        const double frames = end.as(MTime::uiUnit()) - begin.as(MTime::uiUnit());
+        const int steps = static_cast<int>(std::max(8.0, std::min(64.0, std::ceil(frames * 8.0))));
+        for (int step = 1; step < steps; ++step)
+            times.insert(MTime(first + duration * step / steps, MTime::kSeconds));
+        times.insert(MTime(first + duration / 1024.0, MTime::kSeconds));
+        times.insert(MTime(first + duration * 1023.0 / 1024.0, MTime::kSeconds));
+    }
+    std::vector<CurveSample> samples;
+    samples.reserve(times.size());
+    for (const MTime &time : times)
+        samples.push_back(CurveSample{time, curve.evaluate(time)});
+    return samples;
 }
 
-void copyKeys(const MIntArray &keys, const MFnAnimCurve &fnSource, MFnAnimCurve &fnDest, MAnimCurveChange  *change)
+bool fitsReference(const MFnAnimCurve &curve, const std::vector<CurveSample> &samples,
+                   double scale, double tolerance)
 {
-	for (unsigned int i = 0; i < keys.length(); ++i)
-		copyKey(keys[i], fnSource, fnDest,  change);
-    
-    restoreTangents(fnSource, fnDest);
+    for (const CurveSample &sample : samples)
+    {
+        MStatus status;
+        const double value = curve.evaluate(sample.time, &status);
+        if (!status || !std::isfinite(value) ||
+            std::fabs(value - sample.value) * scale > tolerance)
+            return false;
+    }
+    return true;
 }
 
-bool aroundThisValue(const double thisValue, const double value, const double aroundValue)
+bool stepped(MFnAnimCurve::TangentType type)
 {
-	return (thisValue < value + aroundValue && thisValue > value - aroundValue);
+    return type == MFnAnimCurve::kTangentStep || type == MFnAnimCurve::kTangentStepNext;
 }
-
-void fixCurve(const MFnAnimCurve &fnSource,  MFnAnimCurve &fnDest)
-{
-	int nKeys = fnDest.numKeys();
-	MIntArray keysToCopy;
-	
-    unsigned int sourceKeyIndex, destKeyIndex;
-    double sourceValue, destValue;
-    MTime eTime;
-	for (int i = 0; i < nKeys; ++i)
-	{
-		MTime time = fnDest.time(i);
-		double fvalue = fnDest.value(i);
-		
-		eTime = time - 1;
-		if (!fnDest.find(eTime, destKeyIndex) && fnSource.find(eTime, sourceKeyIndex))
-		{
-			sourceValue = fnSource.value(sourceKeyIndex);
-			destValue = fnDest.evaluate(eTime);
-			
-			if (!aroundThisValue(destValue, sourceValue, 0.0009) && aroundThisValue(sourceValue, fvalue, 0.0009))
-				copyKey(sourceKeyIndex, fnSource, fnDest, NULL);
-		}
-		
-		eTime = time + 1;
-		if (!fnDest.find(eTime, destKeyIndex) && fnSource.find(eTime, sourceKeyIndex))
-		{
-			sourceValue = fnSource.value(sourceKeyIndex);
-			destValue = fnDest.evaluate(eTime);
-			
-			if (!aroundThisValue(destValue, sourceValue, 0.0009) && aroundThisValue(sourceValue, fvalue, 0.0009))
-				copyKey(sourceKeyIndex, fnSource, fnDest, NULL);
-		}
-	}
 }
 
 void KeyReducerCmd::sampleCurve(MFnAnimCurve &curve)
@@ -421,54 +317,61 @@ void KeyReducerCmd::sampleCurve(MFnAnimCurve &curve)
     }
 }
 
-void KeyReducerCmd::keyReduce(MFnAnimCurve &curve)
+MStatus KeyReducerCmd::keyReduce(MFnAnimCurve &curve)
 {
-    if (curve.numKeys() <= 2) return;
-    
+    if (curve.numKeys() <= 2)
+        return MS::kSuccess;
     if (preBake)
     {
         sampleCurve(curve);
         curve.setIsWeighted(false, &animCurveChange);
     }
-    
-    MIntArray keyIndexes;
-	for (unsigned int i = 0; i < curve.numKeys(); ++i)
-	{
-		MTime time = curve.time(i);
-		if (isAfterStartTime(time) && isBeforeEndTime(time))
-			keyIndexes.append(i);
-	}
-    
-    if (keyIndexes.length() <= 2) return;
-    
-    MIntArray outKeys;
-    
-    MDGModifier modifier;
-	MFnAnimCurve tempCurve;
-	tempCurve.create(curve.animCurveType(), &modifier);
-    tempCurve.setIsWeighted(curve.isWeighted());
 
-    doKeyReduce(keyIndexes, curve, outKeys);
-    copyKeys(outKeys, curve, tempCurve, NULL);
-	
-    fixCurve(curve, tempCurve);
-    
-    for (int i = curve.numKeys() - 1; i >= 0 ; --i)
-	{
-		MTime time = curve.time(i);
-		if (isAfterStartTime(time) && isBeforeEndTime(time))
-			curve.remove(i, &animCurveChange);
-	}
-    
-    outKeys.clear();
-    for (unsigned int keysIndex = 0; keysIndex < tempCurve.numKeys(); ++keysIndex)
-		outKeys.append(keysIndex);
-    
-    copyKeys(outKeys, tempCurve, curve, &animCurveChange);
-    
-    modifier.undoIt();
-     
-    
+    std::vector<MTime> eligible;
+    for (unsigned int index = 0; index < curve.numKeys(); ++index)
+    {
+        const MTime time = curve.time(index);
+        if (isAfterStartTime(time) && isBeforeEndTime(time))
+            eligible.push_back(time);
+    }
+    if (eligible.size() <= 2)
+        return MS::kSuccess;
+
+    const std::vector<KeyReducerDetail::CurveSample> reference = KeyReducerDetail::sampleReference(curve);
+    const double scale = KeyReducerDetail::displayValueScale(curve);
+    // Sampling is not an analytic error bound. Reserve a small margin for
+    // extrema between validation samples, and allow only numeric noise at zero.
+    const double tolerance = std::max(1.0e-10, deviation * 0.95);
+    for (unsigned int index = 1; index + 1 < curve.numKeys(); )
+    {
+        const MTime time = curve.time(index);
+        if (time <= eligible.front() || time >= eligible.back() ||
+            KeyReducerDetail::stepped(curve.outTangentType(index - 1)) ||
+            KeyReducerDetail::stepped(curve.inTangentType(index)) || KeyReducerDetail::stepped(curve.outTangentType(index)))
+        {
+            ++index;
+            continue;
+        }
+        // Native reversible edits preserve Maya's complete tangent state,
+        // including weighted fixed handles, without reconstructing the curve.
+        MAnimCurveChange trial;
+        MStatus status = curve.remove(index, &trial);
+        if (!status)
+            return status;
+        const bool accepted = KeyReducerDetail::fitsReference(curve, reference, scale, tolerance);
+        status = trial.undoIt();
+        if (!status)
+            return status;
+        if (accepted)
+        {
+            status = curve.remove(index, &animCurveChange);
+            if (!status)
+                return status;
+        }
+        else
+            ++index;
+    }
+    return MS::kSuccess;
 }
 
 MStatus KeyReducerCmd::redoIt()

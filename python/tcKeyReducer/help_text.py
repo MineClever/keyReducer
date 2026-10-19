@@ -2,7 +2,7 @@
 """Bilingual UI copy shared by the tooltips and the local help panel."""
 
 TOOLTIPS = {
-    '_value_line_edit': u'减键容差；通常数值越大，保留的关键帧越少。不是百分比，也不保证最终曲线的最大误差。\nReduction tolerance. Higher values usually keep fewer keys. Not a percentage or a bound on final curve error.',
+    '_value_line_edit': u'采样点上的曲线数值误差容差，使用场景显示单位（如旋转角度）；数值越大通常减键越多。包含帧间采样，不是连续曲线的严格最大误差保证。\nSampled curve-value error tolerance in scene display units, such as rotation degrees. Higher values usually remove more keys. Includes subframe samples; not an analytic maximum-error guarantee.',
     '_value_slider': u'调整 Value。默认只改参数；勾选 Auto Execute 后拖动会实时预览减键。\nAdjust Value. Changes parameters only by default; enable Auto Execute for live drag previews.',
     '_min_value': u'滑块可调整的最小 Value，不是动画的起始帧。\nMinimum Value available on the slider, not the animation start frame.',
     '_max_value': u'滑块可调整的最大 Value，不是动画的结束帧。\nMaximum Value available on the slider, not the animation end frame.',
@@ -36,23 +36,27 @@ li { margin-bottom: 8px; } .en { color: #888; }
 <br/>Clean up baked or densely keyed animation by removing redundant keys while trying to retain its shape.</p>
 
 <h2>1. 工作原理 / How it works</h2>
-<p>工具逐条处理选中对象的动画属性。在指定时间范围内，先保留首尾关键帧，再在
-“时间—数值”平面中，比较原关键帧与相邻保留帧之间直线的距离。
-若偏差大于 Value，就加入偏差最大的关键帧并重新检查，直到满足容差或所有帧已保留。
-少于三个待处理关键帧时不会进行此简化。</p>
-<p>Each selected animation channel is processed separately. The first and last keys in the
-processing range are retained. In time/value space, original key positions are compared with
-the straight lines between retained keys. The key with the largest distance is added when
-that distance exceeds Value. Checks repeat until the tolerance is met or all keys are kept.
-Fewer than three keys in the range need no such simplification.</p>
-<p>随后根据保留帧重建曲线，并尽量恢复保留帧的切线、权重和锁定状态，也会对部分平台段补帧。
-Value 是该简化过程的距离容差，通常越大减键越强；它不是减键百分比，也不是最终插值曲线的
-最大误差保证。时间单位、属性量纲和曲线形状都会影响结果，应结合播放与曲线检查。</p>
-<p>The curve is rebuilt from retained keys, restoring their tangent, weight and lock settings
-where possible, with additional keys for some flat sections. Value is the simplification
-distance tolerance: larger values usually reduce more keys. It is neither a removal percentage
-nor a guaranteed maximum error of the final interpolated curve. Time units, channel units and
-curve shape affect the result, so inspect both playback and the curves.</p>
+<p>工具逐条处理选中对象的动画属性，缓存原曲线在关键帧和帧间采样点上的数值，
+然后使用 Maya 原生 API 逐个试删中间关键帧，让 Auto、Spline、Clamped、Plateau 等切线
+根据新的邻居正常计算。只有与原曲线的采样误差满足 Value 容差时才接受删键，否则恢复该键。
+处理范围内的首尾键及 Step / StepNext 跳变边界保守保留。</p>
+<p>Each animated channel is sampled at original keys and between keys. Maya's native API
+tries removing interior keys, letting Auto, Spline, Clamped and Plateau tangents update from
+new neighbors. A deletion is accepted only if sampled differences from the original curve
+satisfy Value; otherwise it is reverted. Range endpoints and Step / StepNext boundaries are
+conservatively retained.</p>
+<p>工具直接保留原曲线的切线类型、固定切线手柄、加权状态、锁定信息与无穷设置，
+不再按直线距离拟合，也不会在普通减键时把自动切线转换成固定切线。Value 使用场景显示单位，
+例如旋转使用场景角度单位，位移使用场景长度单位。采样包括每个原始段内的子帧检查，
+但不是连续曲线的严格最大误差证明；特别尖锐的加权段仍应播放检查。
+Pre Bake 启用时会先重新采样，其切线变化属于烘焙行为。</p>
+<p>The original curve retains its tangent types, fixed handles, weighting, locks and infinity
+settings. Reduction checks the actual interpolated curve rather than straight-line distances;
+ordinary reduction does not convert automatic tangents to fixed. Value uses scene display
+units, such as degrees for rotations and scene length units for translations. Subframe
+checks are included in each original segment, but finite sampling is not an analytic error
+bound; inspect especially sharp weighted spans. With Pre Bake enabled, the reference is the
+resampled curve and baking can change tangents.</p>
 
 <h2>2. 参数与属性 / Parameters and channels</h2>
 <ul>

@@ -11,7 +11,30 @@ Features:
 * Works on multiple curves at once
 * Curves selection from Graph Editor and Channel Box
 * Frame range selection for local control over keys reduction
-* Pre Bake mode converts weighted curves into non-weighted, it fixes all your broken tangents too.
+* Pre Bake resamples curves at whole frames and converts them to non-weighted curves.
+
+## Curve fitting
+
+Reduction uses reversible native Maya key removal and evaluates the resulting
+interpolated curve against reference samples, rather than measuring key positions
+against straight lines. Automatic/spline/clamped/plateau tangents keep their types
+and recalculate normally; fixed handles, weighting, locks and infinity settings
+remain on the original curve. Range endpoints and stepped transition boundaries
+are conservatively retained. Preview cache restoration also restores tangent types.
+
+`Value` is now sampled absolute curve-value error in scene display units (rotation
+uses the scene angle unit, translation the scene length unit). Original key times
+and 8-64 samples per original span, plus near-boundary samples, are checked with a
+small safety margin. This is finite sampling, not an analytic maximum-error proof.
+It may keep more keys than the old straight-line method to preserve interpolation.
+Pre Bake compares against its resampled reference. Align Keys is a separate
+insertion step and may adjust neighboring tangent types to preserve curve shape.
+
+The design follows the distinctions between neighbor-dependent automatic tangents,
+weighted Bezier and non-weighted interpolation in
+[Autodesk animx](https://github.com/Autodesk/animx/blob/master/src/animx.cpp).
+Evaluation stays in Maya's native API to match the running Maya version; animx is
+not a build or runtime dependency.
 
 ## Windows builds
 
@@ -73,6 +96,7 @@ plugin search path. Loading errors propagate before the UI opens.
 - With **Auto Execute** enabled, dragging previews from the cached original
   curves; entering a value and pressing Return also executes.
 
+The dialog is parented to Maya's main window and does not use global always-on-top.
 Every option has a Chinese/English tooltip. The main window's **Help / 帮助**
 action opens a scrollable bilingual guide covering the algorithm, settings,
 workflow, previews, undo and automatic plugin loading. Help remains available

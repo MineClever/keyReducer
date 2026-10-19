@@ -39,14 +39,9 @@ public:
     
 private:
     
-    void keyReduce(MFnAnimCurve &curve);
+    MStatus keyReduce(MFnAnimCurve &curve);
     bool isAfterStartTime(const MTime &time);
     bool isBeforeEndTime(const MTime &time);
-    void doKeyReduce(const MIntArray &sourceKeys, const MFnAnimCurve &fnCurve, MIntArray &outKeys);
-    void addIndex(MIntArray &array, const int index);
-    int getIndexInArray(const MIntArray &array, const int &val);
-    void getBoundaries(const MIntArray &keys, const MFnAnimCurve &fnCurve, const int &currentIndex, double &x1, double &y1,double &x2, double &y2);
-    double getValue(const double &x1, const double &y1, const double &x2, const double &y2, const double &x3, const double &y3);
     void sampleCurve(MFnAnimCurve &curve);
     MStatus alignKeyTimes(const std::vector<MObject> &curves);
     

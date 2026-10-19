@@ -5,18 +5,29 @@ import traceback
 
 try:
     from PySide6 import QtGui, QtCore, QtWidgets
+    import shiboken6 as shiboken
 except ImportError:
     try:
         from PySide2 import QtGui, QtCore, QtWidgets
+        import shiboken2 as shiboken
     except ImportError:
         from PySide import QtGui, QtCore
         import PySide.QtGui as QtWidgets
+        import shiboken
 
 from maya import cmds
+from maya import OpenMayaUI as omui
 from .help_text import HELP_HTML, TOOLTIPS
 
 GRAPH_EDITOR_NAME = 'graphEditor1GraphEd'
 CHANNEL_BOX_NAME = 'mainChannelBox'
+
+
+def _maya_main_window():
+    pointer = omui.MQtUtil.mainWindow()
+    if pointer:
+        return shiboken.wrapInstance(int(pointer), QtWidgets.QWidget)
+    return None
 
 
 def _ensure_plugin_loaded():
@@ -442,11 +453,11 @@ class KeyReducerHelpDialog(QtWidgets.QDialog):
 
 class KeyReducerWidget(QtWidgets.QDialog):
     def __init__(self,parent=None):
+        if parent is None:
+            parent = _maya_main_window()
         super(KeyReducerWidget, self).__init__(parent)
         self.setWindowTitle('Key Reducer')
         self.setObjectName('Key Reducer')
-
-        self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
 
         self._main_layout = _build_layout(False)
         self.setLayout(self._main_layout)

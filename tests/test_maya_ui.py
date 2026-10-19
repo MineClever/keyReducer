@@ -3,6 +3,7 @@
 from __future__ import print_function
 import os
 import sys
+import math
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,6 +28,7 @@ class KeyReducerUiTests(unittest.TestCase):
         self.obj = cmds.createNode('transform', name='reduceMe')
         for frame in range(1, 11):
             cmds.setKeyframe(self.obj, attribute='translateX', time=frame, value=frame)
+        cmds.keyTangent(self.obj + '.translateX', inTangentType='linear', outTangentType='linear')
         cmds.select(self.obj)
         cmds.flushUndo()
         self.controls = ui.KeyReducerControls()
@@ -157,6 +159,31 @@ class KeyReducerUiTests(unittest.TestCase):
         finally:
             window.close()
             window.deleteLater()
+
+    def test_dialog_is_parented_to_maya_main_window(self):
+        main_window = ui.QtWidgets.QMainWindow()
+        pointer = ui.shiboken.getCppPointer(main_window)[0]
+        class QtUtil(object):
+            @staticmethod
+            def mainWindow():
+                return pointer
+        class FakeMayaUI(object):
+            MQtUtil = QtUtil
+        original = ui.omui
+        ui.omui = FakeMayaUI()
+        window = None
+        try:
+            window = ui.KeyReducerWidget()
+            self.assertIs(window.parentWidget(), main_window)
+            self.assertFalse(window.windowFlags() & ui.QtCore.Qt.WindowStaysOnTopHint)
+            window._show_help()
+            self.assertIs(window._help_dialog.parentWidget(), window)
+        finally:
+            if window is not None:
+                window.close()
+            ui.omui = original
+            main_window.close()
+            main_window.deleteLater()
 
     def test_startup_auto_loads_unloaded_plugin_and_reuses_jobs(self):
         cmds.flushUndo()
@@ -303,7 +330,7 @@ class KeyReducerUiTests(unittest.TestCase):
             ui.cmds = original
 
 
-class KeyAlignmentTests(unittest.TestCase):
+class CurveTestCase(unittest.TestCase):
     def setUp(self):
         self.original_unit = cmds.currentUnit(query=True, time=True)
         cmds.file(new=True, force=True)
@@ -326,10 +353,13 @@ class KeyAlignmentTests(unittest.TestCase):
     def values(self, attr, samples):
         return [cmds.getAttr(attr, time=time) for time in samples]
 
+
+class KeyAlignmentTests(CurveTestCase):
     def check_union_and_shape(self, weighted):
         times = list(range(1, 10))
+        y_times = [time + 0.125 if weighted and 1 < time < 9 else time for time in times]
         x = self.curve('translateX', times, [5 if time == 3 else 0 for time in times])
-        y = self.curve('translateY', times, [5 if time == 7 else 0 for time in times])
+        y = self.curve('translateY', y_times, [5 if time == 7 else 0 for time in times])
         for attr in (x, y):
             cmds.keyTangent(attr, weightedTangents=weighted)
             if weighted:
@@ -352,7 +382,7 @@ class KeyAlignmentTests(unittest.TestCase):
         self.assertFalse(cmds.listConnections(self.node + '.translateZ', source=True, type='animCurve'))
         cmds.undo()
         self.assertEqual(self.times(x), times)
-        self.assertEqual(self.times(y), times)
+        self.assertEqual(self.times(y), y_times)
         cmds.redo()
         self.assertEqual(self.times(x), union)
         self.assertEqual(self.times(y), union)
@@ -415,10 +445,110 @@ class KeyAlignmentTests(unittest.TestCase):
                     self.assertAlmostEqual(cmds.getAttr(attr, time=time), value, places=5)
 
 
+class TangentReductionTests(CurveTestCase):
+    def check_fit(self, tangent, weighted=False, rotation=False, preview=False):
+        attr = self.curve('rotateX' if rotation else 'translateX', list(range(41)),
+                          [10 * math.sin(time * 0.23) + 2 * math.cos(time * 0.57)
+                           for time in range(41)])
+        cmds.keyTangent(attr, weightedTangents=weighted)
+        cmds.keyTangent(attr, inTangentType=tangent, outTangentType=tangent)
+        samples = [index / 64.0 for index in range(40 * 64 + 1)]
+        reference = self.values(attr, samples)
+        original_types = cmds.keyTangent(attr, query=True, outTangentType=True)
+        original_times = self.times(attr)
+        original_angles = cmds.keyTangent(attr, query=True, outAngle=True)
+        tolerance = 0.05
+        cmds.flushUndo()
+        if preview:
+            cmds.tcStoreKeys(attr)
+            cmds.tcKeyReducer(attr, value=1.0)
+            cmds.tcRestoreKeys()
+            self.assertEqual(cmds.keyTangent(attr, query=True, outTangentType=True), original_types)
+            for actual, expected in zip(self.values(attr, samples), reference):
+                self.assertAlmostEqual(actual, expected, places=7)
+        cmds.tcKeyReducer(attr, value=tolerance)
+        self.assertLess(len(self.times(attr)), len(original_times))
+        self.assertEqual(set(cmds.keyTangent(attr, query=True, inTangentType=True)), set([tangent]))
+        self.assertEqual(set(cmds.keyTangent(attr, query=True, outTangentType=True)), set([tangent]))
+        error = max(abs(actual - expected)
+                    for actual, expected in zip(self.values(attr, samples), reference))
+        self.assertLessEqual(error, tolerance + 1.0e-6, 'dense curve error: {0}'.format(error))
+        reduced_times = self.times(attr)
+        cmds.undo()
+        self.assertEqual(self.times(attr), original_times)
+        self.assertEqual(cmds.keyTangent(attr, query=True, outTangentType=True), original_types)
+        for actual, expected in zip(cmds.keyTangent(attr, query=True, outAngle=True), original_angles):
+            self.assertAlmostEqual(actual, expected, places=6)
+        for actual, expected in zip(self.values(attr, samples), reference):
+            self.assertAlmostEqual(actual, expected, places=7)
+        cmds.redo()
+        self.assertEqual(self.times(attr), reduced_times)
+
+    def test_auto_fit_and_types(self):
+        self.check_fit('auto')
+
+    def test_weighted_auto_fit(self):
+        self.check_fit('auto', weighted=True)
+
+    def test_weighted_fixed_cache_restores_handles(self):
+        attr = self.curve('translateX', list(range(9)),
+                          [0, 0, 5, 0, -1, 0, 3, 0, 0])
+        cmds.keyTangent(attr, weightedTangents=True)
+        cmds.keyTangent(attr, inTangentType='fixed', outTangentType='fixed',
+                        inAngle=15, outAngle=-20, inWeight=0.5, outWeight=0.7)
+        samples = [index / 64.0 for index in range(8 * 64 + 1)]
+        values = self.values(attr, samples)
+        cmds.tcStoreKeys(attr)
+        cmds.tcKeyReducer(attr, value=100)
+        cmds.tcRestoreKeys()
+        self.assertEqual(set(cmds.keyTangent(attr, query=True, outTangentType=True)), set(['fixed']))
+        # Weighted Bezier root solving can differ at the last decimal places
+        # after a vector round-trip even when the same handles are restored.
+        self.assertLess(max(abs(a - b) for a, b in zip(self.values(attr, samples), values)), 1.0e-6)
+
+    def test_spline_fit(self):
+        self.check_fit('spline')
+
+    def test_clamped_fit(self):
+        self.check_fit('clamped')
+
+    def test_plateau_fit(self):
+        self.check_fit('plateau')
+
+    def test_rotation_tolerance_is_in_degrees(self):
+        self.check_fit('auto', rotation=True)
+
+    def test_auto_preview_restore(self):
+        self.check_fit('auto', preview=True)
+
+    def test_step_and_stepnext_transitions(self):
+        for tangent in ('step', 'stepnext'):
+            attr = self.curve('translateX', [0, 1, 3, 4, 8], [0, 3, -2, 5, 1])
+            cmds.keyTangent(attr, outTangentType=tangent)
+            samples = [index / 64.0 for index in range(8 * 64 + 1)]
+            values = self.values(attr, samples)
+            cmds.tcKeyReducer(attr, value=100)
+            self.assertEqual(self.times(attr), [0, 1, 3, 4, 8])
+            self.assertEqual(self.values(attr, samples), values)
+            cmds.cutKey(attr, clear=True)
+
+    def test_range_keeps_outside_keys_and_checks_neighboring_spans(self):
+        attr = self.curve('translateX', list(range(21)),
+                          [math.sin(time * 0.4) for time in range(21)])
+        cmds.keyTangent(attr, inTangentType='auto', outTangentType='auto')
+        samples = [index / 64.0 for index in range(20 * 64 + 1)]
+        values = self.values(attr, samples)
+        cmds.tcKeyReducer(attr, value=0.05, startTime=4, endTime=15)
+        self.assertEqual([time for time in self.times(attr) if time <= 4 or time >= 15],
+                         list(range(5)) + list(range(15, 21)))
+        self.assertLessEqual(max(abs(a - b) for a, b in zip(self.values(attr, samples), values)), 0.05)
+
+
 if __name__ == '__main__':
     suite = unittest.TestSuite([
         unittest.defaultTestLoader.loadTestsFromTestCase(KeyReducerUiTests),
         unittest.defaultTestLoader.loadTestsFromTestCase(KeyAlignmentTests),
+        unittest.defaultTestLoader.loadTestsFromTestCase(TangentReductionTests),
     ])
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     maya.standalone.uninitialize()
