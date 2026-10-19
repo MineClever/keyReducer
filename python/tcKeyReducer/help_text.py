@@ -16,6 +16,7 @@ TOOLTIPS = {
     '_custom_range_begin': u'自定义处理范围的起始帧；应小于或等于结束帧。\nFirst frame of the custom range; must not exceed the end frame.',
     '_custom_range_end': u'自定义处理范围的结束帧；应大于或等于起始帧。\nLast frame of the custom range; must not precede the start frame.',
     '_auto_execute': u'默认关闭。开启后拖动滑块或输入 Value 并按 Enter 会执行减键；仅勾选此项不会执行。一次拖动可一次撤销。\nOff by default. Drag the slider or enter Value and press Return to reduce. Toggling alone does not execute. One drag is one undo step.',
+    '_refresh_button': u'重新读取当前选择并缓存曲线，重建选择变化回调。新建场景后或界面状态未更新时可点击；不执行减键，也不恢复旧场景曲线。\nRe-read the current selection, cache its curves and rebuild selection callbacks. Use after creating a scene or when the UI is stale. Does not reduce keys or restore old-scene curves.',
     '_execute_button': u'按当前 Value、属性、时间范围和 Pre Bake 设置执行一次减键。重复执行会继续处理当前结果。\nReduce once using the current Value, channels, range and Pre Bake settings. Repeated executions work on the current result.',
     '_undo_button': u'撤销 Maya 最近的一步操作，包括减键或一次预览拖动；如果之后做了其他编辑，会先撤销那些编辑。\nUndo the latest Maya operation, including reduction or a preview drag. Later scene edits are undone first.',
     'attributes': u'选择要处理的属性，作用对象来自 Maya 当前的对象选择。\nChoose channels to process on the currently selected Maya objects.',
@@ -82,6 +83,14 @@ Keys outside the range are not reduced, but boundary tangents or Pre Bake can af
 </ul>
 
 <h2>4. 常用流程 / Typical workflow</h2>
+<p><b>Refresh：</b>重新读取当前选择的曲线并建立新的缓存，同时重新注册选择变化回调。
+新建场景后、切换对象后界面未更新或回调丢失时，点击 Execute 前面的 Refresh。
+即使当前没有选择对象，此按钮仍可使用。刷新保留当前曲线，不执行减键，也不会恢复旧场景的缓存。
+已有的 Value、属性模式、时间范围等设置会保留。</p>
+<p><b>Refresh:</b> Re-read and cache the currently selected curves, and re-register selection callbacks.
+Use the button before Execute after creating a scene, or if the UI stops following selection changes.
+It remains available with no selection. Refresh keeps the current curves without reducing keys or
+restoring an old scene's cache. Value, channel mode and range settings are preserved.</p>
 <ol>
 <li>选中需要处理的动画对象。<br/>Select the animated objects to process.</li>
 <li>选择属性模式和时间范围；初次使用可保留 All 与 Entire Curve。<br/>

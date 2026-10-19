@@ -115,7 +115,8 @@ class KeyReducerUiTests(unittest.TestCase):
         try:
             cmds.select(clear=True)
             window._selection_changed()
-            self.assertFalse(window._controls.isEnabled())
+            self.assertFalse(window._controls._execute_button.isEnabled())
+            self.assertTrue(window._controls._refresh_button.isEnabled())
             self.assertTrue(window._help_action.isEnabled())
             window._help_action.trigger()
             app.processEvents()
@@ -158,6 +159,92 @@ class KeyReducerUiTests(unittest.TestCase):
             window.close()
         for job in final_jobs:
             self.assertFalse(cmds.scriptJob(exists=job))
+
+    def test_refresh_keeps_curves_and_finishes_preview_chunk(self):
+        window = ui.KeyReducerWidget()
+        try:
+            controls = window._controls
+            controls._refresh_button.click()
+            self.assertEqual(self.count(), 10)
+            self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
+            controls._auto_execute.setChecked(True)
+            controls._value_slider_pressed()
+            self.assertTrue(controls._slider_drag_active)
+            self.assertEqual(self.count(), 2)
+            controls._refresh_button.click()
+            self.assertFalse(controls._slider_drag_active)
+            self.assertEqual(self.count(), 2)
+            controls._value_slider.setValue(8000)
+            self.assertEqual(self.count(), 2)
+            controls._undo_button.click()
+            self.assertEqual(self.count(), 10)
+        finally:
+            window.close()
+            window.deleteLater()
+
+    def test_refresh_recovers_lost_callback_after_new_scene(self):
+        # Standalone does not create UI scriptJobs; proxy just that API while
+        # leaving all selection, scene, curve and cache operations in real Maya.
+        class CallbackProxy(object):
+            def __init__(self):
+                self.jobs = {}
+                self.next_id = 1
+
+            def __getattr__(self, name):
+                return getattr(cmds, name)
+
+            def scriptJob(self, **kwargs):
+                if 'exists' in kwargs:
+                    return kwargs['exists'] in self.jobs
+                if 'kill' in kwargs:
+                    del self.jobs[kwargs['kill']]
+                    return
+                job = self.next_id
+                self.next_id += 1
+                self.jobs[job] = kwargs['event'][1]
+                return job
+
+        original = ui.cmds
+        proxy = CallbackProxy()
+        ui.cmds = proxy
+        window = ui.KeyReducerWidget()
+        try:
+            window._refresh()
+            self.assertEqual(len(proxy.jobs), 1)
+            cmds.file(new=True, force=True)
+            proxy.jobs.clear()  # Simulate scene change removing the callback.
+            window._selection_changed()
+            self.assertFalse(window._controls._execute_button.isEnabled())
+            self.assertTrue(window._controls._refresh_button.isEnabled())
+            window._controls._refresh_button.click()
+            self.assertEqual(len(proxy.jobs), 1)
+            self.assertFalse(window._controls._execute_button.isEnabled())
+
+            node = cmds.createNode('transform', name='newSceneCurve')
+            for frame in range(1, 5):
+                cmds.setKeyframe(node, attribute='translateX', time=frame, value=100 + frame)
+            cmds.select(node)
+            cmds.flushUndo()
+            # Simulate another missed callback: Refresh must enable Execute.
+            window._controls._refresh_button.click()
+            self.assertTrue(window._controls._execute_button.isEnabled())
+            self.assertEqual(len(proxy.jobs), 1)
+            self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
+            self.assertEqual(cmds.keyframe(node + '.translateX', query=True, keyframeCount=True), 4)
+            cmds.tcKeyReducer(node + '.translateX', value=0.5)
+            cmds.tcRestoreKeys()
+            self.assertEqual(cmds.keyframe(node + '.translateX', query=True, valueChange=True),
+                             [101.0, 102.0, 103.0, 104.0])
+            # The replacement callback follows selection changes again.
+            cmds.select(clear=True)
+            list(proxy.jobs.values())[0]()
+            self.assertFalse(window._controls._execute_button.isEnabled())
+            self.assertTrue(window._controls._refresh_button.isEnabled())
+        finally:
+            window.close()
+            window.deleteLater()
+            ui.cmds = original
+        self.assertEqual(proxy.jobs, {})
 
     def test_plugin_name_loading_and_failure(self):
         class FakeCommands(object):

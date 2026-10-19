@@ -228,11 +228,13 @@ class KeyReducerControls(QtWidgets.QWidget):
         self._auto_execute = QtWidgets.QCheckBox("Auto Execute")
         self._auto_execute.setChecked(False)
         self._auto_execute.setToolTip("Preview reduction while dragging or after entering a value.")
+        self._refresh_button = QtWidgets.QPushButton("Refresh")
         self._execute_button = QtWidgets.QPushButton("Execute")
         self._undo_button = QtWidgets.QPushButton("Undo")
         self._undo_button.setToolTip("Undo the latest Maya operation, including a reduction or preview drag.")
         actions.addWidget(self._auto_execute)
         actions.addStretch(1)
+        actions.addWidget(self._refresh_button)
         actions.addWidget(self._execute_button)
         actions.addWidget(self._undo_button)
         self._main_layout.addLayout(actions)
@@ -244,6 +246,12 @@ class KeyReducerControls(QtWidgets.QWidget):
             widget.setToolTip(tip)
             if isinstance(widget.parentWidget(), LineWidget):
                 widget.parentWidget().setToolTip(tip)
+
+    def _set_selection_enabled(self, enabled):
+        # Refresh must remain clickable when a lost callback leaves the UI stale.
+        for name in TOOLTIPS:
+            if name.startswith('_') and name != '_refresh_button':
+                getattr(self, name).setEnabled(enabled)
 
     def _connect_signals(self):
         self._min_value.valueChanged.connect(self._min_value_changed)
@@ -336,10 +344,14 @@ class KeyReducerControls(QtWidgets.QWidget):
         self._value_slider.setTickInterval(max(1, int(round((self._max_value.value() - self._min_value.value()) * 1000))))
 
     def _get_attribute_names_from_graph_editor(self):
+        if not cmds.animCurveEditor(GRAPH_EDITOR_NAME, exists=True):
+            return []
         animCurves = cmds.animCurveEditor(GRAPH_EDITOR_NAME, q=True, cs=True)
         channels = set()
         for a in animCurves or []:
             connections = cmds.listConnections("%s.output" % a, s=False, d=True, plugs=True)
+            if not connections:
+                continue
             tokens = connections[0].split(".")
             channels.add(str(tokens[len(tokens) - 1]))
         return list(channels)
@@ -445,6 +457,7 @@ class KeyReducerWidget(QtWidgets.QDialog):
         self._main_layout.addWidget(about)
 
         self._controls = KeyReducerControls()
+        self._controls._refresh_button.clicked.connect(self._refresh)
         self._main_layout.addWidget(self._controls)
 
         self._script_jobs = []
@@ -458,7 +471,20 @@ class KeyReducerWidget(QtWidgets.QDialog):
 
     def _selection_changed(self):
         selection = cmds.ls(sl=True, l=True)
-        self._controls.setEnabled(bool(selection))
+        self._controls._set_selection_enabled(bool(selection))
+
+    def _refresh(self):
+        _ensure_plugin_loaded()
+        # Keep the visible result and discard the previous drag session. Never
+        # restore cached curves here: they may belong to a scene already closed.
+        if self._controls._slider_drag_active:
+            self._controls._slider_drag_active = False
+            cmds.undoInfo(closeChunk=True)
+        self._start_script_jobs()
+        self._selection_changed()
+        attrs = [attr for attr in self._controls._get_attributes() if cmds.objExists(attr)]
+        if attrs:
+            cmds.tcStoreKeys(*attrs)
 
     def _start_script_jobs(self):
         self._stop_script_jobs()

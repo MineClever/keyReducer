@@ -60,6 +60,9 @@ plugin search path. Loading errors propagate before the UI opens.
   update the reduction parameter.
 - **Execute** reduces the selected attributes using the current value, range,
   and Pre Bake settings.
+- **Refresh**, before Execute, re-reads and caches the selected curves and
+  rebuilds selection callbacks after a new scene or a stale UI. It remains
+  enabled with no selection and does not reduce keys or restore old curves.
 - **Undo** invokes Maya's normal undo for the latest operation. A reduction is
   undoable, and an automatic preview drag is grouped into one undo operation.
   If other scene edits are made afterward, Undo follows Maya's usual order.
